@@ -1,0 +1,37 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/Voting.sol": {
+      "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.0;\r\n\r\ncontract Voting {\r\n    address public immutable owner;\r\n    \r\n    struct Candidate {\r\n        string name;\r\n        uint voteCount;\r\n    }\r\n    \r\n    mapping(uint => Candidate) public candidates;\r\n    uint public candidatesCount;\r\n    \r\n    mapping(address => bool) public hasVoted;\r\n    \r\n    event Voted(address indexed voter, uint candidateId);\r\n    event CandidateAdded(uint candidateId, string name);\r\n    \r\n    error Unauthorized();\r\n    error AlreadyVoted();\r\n    error InvalidCandidate();\r\n\r\n    modifier onlyOwner() {\r\n        if (msg.sender != owner) revert Unauthorized();\r\n        _;\r\n    }\r\n\r\n    constructor() {\r\n        owner = msg.sender;\r\n    }\r\n\r\n    function addCandidate(string calldata _name) external onlyOwner {\r\n        candidates[candidatesCount] = Candidate({\r\n            name: _name,\r\n            voteCount: 0\r\n        });\r\n        emit CandidateAdded(candidatesCount, _name);\r\n        candidatesCount++;\r\n    }\r\n\r\n    function vote(uint _candidateId) external {\r\n        if (hasVoted[msg.sender]) revert AlreadyVoted();\r\n        \r\n        if (_candidateId >= candidatesCount) revert InvalidCandidate();\r\n        \r\n        hasVoted[msg.sender] = true;\r\n        \r\n        candidates[_candidateId].voteCount++;\r\n        \r\n        emit Voted(msg.sender, _candidateId);\r\n    }\r\n}"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 1000
+    },
+    "viaIR": true,
+    "evmVersion": "paris",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "storageLayout",
+          "devdoc",
+          "userdoc",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}

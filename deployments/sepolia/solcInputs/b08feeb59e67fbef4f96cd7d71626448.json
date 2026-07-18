@@ -1,0 +1,37 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/StudentRegistryV2.sol": {
+      "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.0;\r\ncontract StudentRegistryV2 {\r\n    address public immutable owner;\r\n\r\n    struct Student {\r\n        string name;\r\n        uint age;\r\n        bool isRegistered;\r\n    }\r\n    \r\n    mapping(address => Student) private students;\r\n\r\n    event StudentAdded(address indexed studentAddress, string name, uint age);\r\n\r\n    error Unauthorized();\r\n    error AlreadyRegistered();\r\n\r\n    constructor() {\r\n        owner = msg.sender;\r\n    }\r\n\r\n    modifier onlyOwner() {\r\n        if (msg.sender != owner) revert Unauthorized();\r\n        _;\r\n    }\r\n\r\n    function registerStudent(address _student, string calldata _name, uint _age) external onlyOwner {\r\n        if (students[_student].isRegistered) {\r\n            revert AlreadyRegistered();\r\n        }\r\n\r\n        students[_student] = Student({\r\n            name: _name,\r\n            age: _age,\r\n            isRegistered: true\r\n        });\r\n\r\n        emit StudentAdded(_student, _name, _age);\r\n    }\r\n\r\n    function getStudent(address _student) external view returns (string memory name, uint age, bool isRegistered) {\r\n        Student storage s = students[_student];\r\n        return (s.name, s.age, s.isRegistered);\r\n    }\r\n\r\n    function isStudentRegistered(address _student) external view returns (bool) {\r\n        return students[_student].isRegistered;\r\n    }\r\n}"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 1000
+    },
+    "viaIR": true,
+    "evmVersion": "paris",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "storageLayout",
+          "devdoc",
+          "userdoc",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}

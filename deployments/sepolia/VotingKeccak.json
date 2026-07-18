@@ -1,0 +1,354 @@
+{
+  "address": "0x4fE8cEddD22B36e2Ea587Ef89b1E7A074F40b387",
+  "abi": [
+    {
+      "inputs": [],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "AlreadyVoted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidCandidate",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "Unauthorized",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "candidateId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "name": "CandidateAdded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "voter",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "candidateId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "Voted",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_name",
+          "type": "string"
+        }
+      ],
+      "name": "addCandidate",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "candidateExists",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "candidateIds",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "candidates",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "voteCount",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getCandidateIds",
+      "outputs": [
+        {
+          "internalType": "bytes32[]",
+          "name": "",
+          "type": "bytes32[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getCandidatesCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "hasVoted",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "owner",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "_candidateId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "vote",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "transactionHash": "0x30480ed5d2541d6f3fa9c6ad5db10a42e8b7a393cba43676b83388e223a44e04",
+  "receipt": {
+    "to": null,
+    "from": "0x546E9b7F0C604C266585955128e65766c6514809",
+    "contractAddress": "0x4fE8cEddD22B36e2Ea587Ef89b1E7A074F40b387",
+    "transactionIndex": 197,
+    "gasUsed": "528527",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "blockHash": "0x0f430b4f4e24c60e99099427d904f0ee97344ac5373115c2b7810e580664aa66",
+    "transactionHash": "0x30480ed5d2541d6f3fa9c6ad5db10a42e8b7a393cba43676b83388e223a44e04",
+    "logs": [],
+    "blockNumber": 11220217,
+    "cumulativeGasUsed": "44149820",
+    "status": 1,
+    "byzantium": true
+  },
+  "args": [],
+  "numDeployments": 1,
+  "solcInputHash": "b0b81a3551c9c03cead188cae7fbf973",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.28+commit.7893614a\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"inputs\":[],\"name\":\"AlreadyVoted\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"InvalidCandidate\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"Unauthorized\",\"type\":\"error\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"bytes32\",\"name\":\"candidateId\",\"type\":\"bytes32\"},{\"indexed\":false,\"internalType\":\"string\",\"name\":\"name\",\"type\":\"string\"}],\"name\":\"CandidateAdded\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"voter\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"bytes32\",\"name\":\"candidateId\",\"type\":\"bytes32\"}],\"name\":\"Voted\",\"type\":\"event\"},{\"inputs\":[{\"internalType\":\"string\",\"name\":\"_name\",\"type\":\"string\"}],\"name\":\"addCandidate\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"name\":\"candidateExists\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"candidateIds\",\"outputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"\",\"type\":\"bytes32\"}],\"name\":\"candidates\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"name\",\"type\":\"string\"},{\"internalType\":\"uint256\",\"name\":\"voteCount\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getCandidateIds\",\"outputs\":[{\"internalType\":\"bytes32[]\",\"name\":\"\",\"type\":\"bytes32[]\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getCandidatesCount\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"name\":\"hasVoted\",\"outputs\":[{\"internalType\":\"bool\",\"name\":\"\",\"type\":\"bool\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"bytes32\",\"name\":\"_candidateId\",\"type\":\"bytes32\"}],\"name\":\"vote\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{},\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"contracts/VotingKeccak.sol\":\"VotingKeccak\"},\"evmVersion\":\"paris\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\",\"useLiteralContent\":true},\"optimizer\":{\"enabled\":true,\"runs\":1000},\"remappings\":[],\"viaIR\":true},\"sources\":{\"contracts/VotingKeccak.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity ^0.8.0;\\n\\ncontract VotingKeccak {\\n    address public immutable owner;\\n\\n    struct Candidate {\\n        string name;\\n        uint voteCount;\\n    }\\n\\n    mapping(bytes32 => Candidate) public candidates;\\n    mapping(bytes32 => bool) public candidateExists;\\n    bytes32[] public candidateIds;\\n\\n    mapping(address => bool) public hasVoted;\\n\\n    event Voted(address indexed voter, bytes32 candidateId);\\n    event CandidateAdded(bytes32 candidateId, string name);\\n\\n    error Unauthorized();\\n    error AlreadyVoted();\\n    error InvalidCandidate();\\n\\n    modifier onlyOwner() {\\n        if (msg.sender != owner) revert Unauthorized();\\n        _;\\n    }\\n\\n    constructor() {\\n        owner = msg.sender;\\n    }\\n\\n    function addCandidate(string calldata _name) external onlyOwner {\\n        bytes32 id = keccak256(abi.encodePacked(_name));\\n        if (candidateExists[id]) return;\\n\\n        candidates[id] = Candidate({ name: _name, voteCount: 0 });\\n        candidateIds.push(id);\\n        candidateExists[id] = true;\\n\\n        emit CandidateAdded(id, _name);\\n    }\\n\\n    function vote(bytes32 _candidateId) external {\\n        if (hasVoted[msg.sender]) revert AlreadyVoted();\\n        if (!candidateExists[_candidateId]) revert InvalidCandidate();\\n\\n        hasVoted[msg.sender] = true;\\n        candidates[_candidateId].voteCount++;\\n\\n        emit Voted(msg.sender, _candidateId);\\n    }\\n\\n    function getCandidateIds() external view returns (bytes32[] memory) {\\n        return candidateIds;\\n    }\\n\\n    function getCandidatesCount() external view returns (uint) {\\n        return candidateIds.length;\\n    }\\n}\\n\",\"keccak256\":\"0xe277b6b179da5a8e46a2ba2800b32f464d2f4fdeb998316fca539d49e9f29952\",\"license\":\"MIT\"}},\"version\":1}",
+  "bytecode": "0x60a08060405234602957336080526108a0908161002f823960805181818161029c01526103560152f35b600080fdfe6080604052600436101561001257600080fd5b60003560e01c8063030161301461051757806309eef43e146104c85780631a0478d5146103b4578063462e91ec146102f15780634a5b8398146102c05780638da5cb5b1461026f578063a69beaba1461015c578063bb9aa28f1461013e5763bec0fde21461007f57600080fd5b34610139576000366003190112610139576040518060206002549283815201809260026000527f405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace9060005b81811061012357505050816100e09103826105ba565b6040519182916020830190602084525180915260408301919060005b81811061010a575050500390f35b82518452859450602093840193909201916001016100fc565b82548452602090930192600192830192016100ca565b600080fd5b34610139576000366003190112610139576020600254604051908152f35b346101395760203660031901126101395760043533600052600360205260ff604060002054166102455780600052600160205260ff604060002054161561021b573360005260036020526040600020600160ff198254161790558060005260006020526001604060002001805460001981146102055760010190556040519081527fc78796858497f000f0a77d7f0c624bbaf635bf26239188e8fba52c571db2398d60203392a2005b634e487b7160e01b600052601160045260246000fd5b7fe66ea08f0000000000000000000000000000000000000000000000000000000060005260046000fd5b7f7c9a1cf90000000000000000000000000000000000000000000000000000000060005260046000fd5b3461013957600036600319011261013957602060405173ffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000168152f35b34610139576020366003190112610139576004356000526001602052602060ff604060002054166040519015158152f35b346101395760203660031901126101395760043567ffffffffffffffff8111610139573660238201121561013957806004013567ffffffffffffffff81116101395736602482840101116101395773ffffffffffffffffffffffffffffffffffffffff7f000000000000000000000000000000000000000000000000000000000000000016330361038a57602461038892016105f2565b005b7f82b429000000000000000000000000000000000000000000000000000000000060005260046000fd5b3461013957602036600319011261013957600435600052600060205260406000206040519081600082546103e781610580565b80845290600181169081156104a55750600114610467575b506001929161040f9103846105ba565b01549060405180926040825282519283604084015260005b84811061044f5750509160609260008483850101526020830152601f80199101168101030190f35b60208282018101516060888401015286945001610427565b6000848152602081209092505b818310610489575050810160200160016103ff565b6020919350806001915483858901015201910190918492610474565b60ff191660208581019190915291151560051b84019091019150600190506103ff565b346101395760203660031901126101395760043573ffffffffffffffffffffffffffffffffffffffff8116809103610139576000526003602052602060ff604060002054166040519015158152f35b34610139576020366003190112610139576004356002548110156101395761054060209161054f565b90549060031b1c604051908152f35b60025481101561056a57600260005260206000200190600090565b634e487b7160e01b600052603260045260246000fd5b90600182811c921680156105b0575b602083101461059a57565b634e487b7160e01b600052602260045260246000fd5b91607f169161058f565b90601f8019910116810190811067ffffffffffffffff8211176105dc57604052565b634e487b7160e01b600052604160045260246000fd5b60405160208101908383833761061c6020828681016000838201520301601f1981018352826105ba565b51902080600052600160205260ff6040600020541661086557604051906040820182811067ffffffffffffffff8211176105dc5760405267ffffffffffffffff84116105dc57601f19601f8501169160405161067b60208501826105ba565b85815236868601116101395785856020830137600060208783010152815260208101600081528260005260006020526040600020915180519067ffffffffffffffff82116105dc576106cd8454610580565b601f811161081d575b50602090601f83116001146107b3576001939291600091836107a8575b5050600019600383901b1c191690831b1783555b5191015560025491680100000000000000008310156105dc57600060607f53b6f5034b8d8d26ce8b57ba8e924f8dc09b7c20e3c87211092301025a78d4e89661075786600184980160025561054f565b81549060031b9087821b918619901b1916179055848352600160205260408320600160ff198254161790558060405197889687526040602088015281604088015283870137840101528101030190a1565b0151905038806106f3565b90601f1983169185600052816000209260005b81811061080557509160019594929183879593106107ec575b505050811b018355610707565b015160001960f88460031b161c191690553880806107df565b929360206001819287860151815501950193016107c6565b846000526020600020601f840160051c8101916020851061085b575b601f0160051c01905b81811061084f57506106d6565b60008155600101610842565b9091508190610839565b50505056fea26469706673582212201261b28d47f1736399485f1bb406bfde328527e8b6875c5b0c5a616b33802fe364736f6c634300081c0033",
+  "deployedBytecode": "0x6080604052600436101561001257600080fd5b60003560e01c8063030161301461051757806309eef43e146104c85780631a0478d5146103b4578063462e91ec146102f15780634a5b8398146102c05780638da5cb5b1461026f578063a69beaba1461015c578063bb9aa28f1461013e5763bec0fde21461007f57600080fd5b34610139576000366003190112610139576040518060206002549283815201809260026000527f405787fa12a823e0f2b7631cc41b3ba8828b3321ca811111fa75cd3aa3bb5ace9060005b81811061012357505050816100e09103826105ba565b6040519182916020830190602084525180915260408301919060005b81811061010a575050500390f35b82518452859450602093840193909201916001016100fc565b82548452602090930192600192830192016100ca565b600080fd5b34610139576000366003190112610139576020600254604051908152f35b346101395760203660031901126101395760043533600052600360205260ff604060002054166102455780600052600160205260ff604060002054161561021b573360005260036020526040600020600160ff198254161790558060005260006020526001604060002001805460001981146102055760010190556040519081527fc78796858497f000f0a77d7f0c624bbaf635bf26239188e8fba52c571db2398d60203392a2005b634e487b7160e01b600052601160045260246000fd5b7fe66ea08f0000000000000000000000000000000000000000000000000000000060005260046000fd5b7f7c9a1cf90000000000000000000000000000000000000000000000000000000060005260046000fd5b3461013957600036600319011261013957602060405173ffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000168152f35b34610139576020366003190112610139576004356000526001602052602060ff604060002054166040519015158152f35b346101395760203660031901126101395760043567ffffffffffffffff8111610139573660238201121561013957806004013567ffffffffffffffff81116101395736602482840101116101395773ffffffffffffffffffffffffffffffffffffffff7f000000000000000000000000000000000000000000000000000000000000000016330361038a57602461038892016105f2565b005b7f82b429000000000000000000000000000000000000000000000000000000000060005260046000fd5b3461013957602036600319011261013957600435600052600060205260406000206040519081600082546103e781610580565b80845290600181169081156104a55750600114610467575b506001929161040f9103846105ba565b01549060405180926040825282519283604084015260005b84811061044f5750509160609260008483850101526020830152601f80199101168101030190f35b60208282018101516060888401015286945001610427565b6000848152602081209092505b818310610489575050810160200160016103ff565b6020919350806001915483858901015201910190918492610474565b60ff191660208581019190915291151560051b84019091019150600190506103ff565b346101395760203660031901126101395760043573ffffffffffffffffffffffffffffffffffffffff8116809103610139576000526003602052602060ff604060002054166040519015158152f35b34610139576020366003190112610139576004356002548110156101395761054060209161054f565b90549060031b1c604051908152f35b60025481101561056a57600260005260206000200190600090565b634e487b7160e01b600052603260045260246000fd5b90600182811c921680156105b0575b602083101461059a57565b634e487b7160e01b600052602260045260246000fd5b91607f169161058f565b90601f8019910116810190811067ffffffffffffffff8211176105dc57604052565b634e487b7160e01b600052604160045260246000fd5b60405160208101908383833761061c6020828681016000838201520301601f1981018352826105ba565b51902080600052600160205260ff6040600020541661086557604051906040820182811067ffffffffffffffff8211176105dc5760405267ffffffffffffffff84116105dc57601f19601f8501169160405161067b60208501826105ba565b85815236868601116101395785856020830137600060208783010152815260208101600081528260005260006020526040600020915180519067ffffffffffffffff82116105dc576106cd8454610580565b601f811161081d575b50602090601f83116001146107b3576001939291600091836107a8575b5050600019600383901b1c191690831b1783555b5191015560025491680100000000000000008310156105dc57600060607f53b6f5034b8d8d26ce8b57ba8e924f8dc09b7c20e3c87211092301025a78d4e89661075786600184980160025561054f565b81549060031b9087821b918619901b1916179055848352600160205260408320600160ff198254161790558060405197889687526040602088015281604088015283870137840101528101030190a1565b0151905038806106f3565b90601f1983169185600052816000209260005b81811061080557509160019594929183879593106107ec575b505050811b018355610707565b015160001960f88460031b161c191690553880806107df565b929360206001819287860151815501950193016107c6565b846000526020600020601f840160051c8101916020851061085b575b601f0160051c01905b81811061084f57506106d6565b60008155600101610842565b9091508190610839565b50505056fea26469706673582212201261b28d47f1736399485f1bb406bfde328527e8b6875c5b0c5a616b33802fe364736f6c634300081c0033",
+  "devdoc": {
+    "kind": "dev",
+    "methods": {},
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {},
+    "version": 1
+  },
+  "storageLayout": {
+    "storage": [
+      {
+        "astId": 13,
+        "contract": "contracts/VotingKeccak.sol:VotingKeccak",
+        "label": "candidates",
+        "offset": 0,
+        "slot": "0",
+        "type": "t_mapping(t_bytes32,t_struct(Candidate)8_storage)"
+      },
+      {
+        "astId": 17,
+        "contract": "contracts/VotingKeccak.sol:VotingKeccak",
+        "label": "candidateExists",
+        "offset": 0,
+        "slot": "1",
+        "type": "t_mapping(t_bytes32,t_bool)"
+      },
+      {
+        "astId": 20,
+        "contract": "contracts/VotingKeccak.sol:VotingKeccak",
+        "label": "candidateIds",
+        "offset": 0,
+        "slot": "2",
+        "type": "t_array(t_bytes32)dyn_storage"
+      },
+      {
+        "astId": 24,
+        "contract": "contracts/VotingKeccak.sol:VotingKeccak",
+        "label": "hasVoted",
+        "offset": 0,
+        "slot": "3",
+        "type": "t_mapping(t_address,t_bool)"
+      }
+    ],
+    "types": {
+      "t_address": {
+        "encoding": "inplace",
+        "label": "address",
+        "numberOfBytes": "20"
+      },
+      "t_array(t_bytes32)dyn_storage": {
+        "base": "t_bytes32",
+        "encoding": "dynamic_array",
+        "label": "bytes32[]",
+        "numberOfBytes": "32"
+      },
+      "t_bool": {
+        "encoding": "inplace",
+        "label": "bool",
+        "numberOfBytes": "1"
+      },
+      "t_bytes32": {
+        "encoding": "inplace",
+        "label": "bytes32",
+        "numberOfBytes": "32"
+      },
+      "t_mapping(t_address,t_bool)": {
+        "encoding": "mapping",
+        "key": "t_address",
+        "label": "mapping(address => bool)",
+        "numberOfBytes": "32",
+        "value": "t_bool"
+      },
+      "t_mapping(t_bytes32,t_bool)": {
+        "encoding": "mapping",
+        "key": "t_bytes32",
+        "label": "mapping(bytes32 => bool)",
+        "numberOfBytes": "32",
+        "value": "t_bool"
+      },
+      "t_mapping(t_bytes32,t_struct(Candidate)8_storage)": {
+        "encoding": "mapping",
+        "key": "t_bytes32",
+        "label": "mapping(bytes32 => struct VotingKeccak.Candidate)",
+        "numberOfBytes": "32",
+        "value": "t_struct(Candidate)8_storage"
+      },
+      "t_string_storage": {
+        "encoding": "bytes",
+        "label": "string",
+        "numberOfBytes": "32"
+      },
+      "t_struct(Candidate)8_storage": {
+        "encoding": "inplace",
+        "label": "struct VotingKeccak.Candidate",
+        "members": [
+          {
+            "astId": 5,
+            "contract": "contracts/VotingKeccak.sol:VotingKeccak",
+            "label": "name",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_string_storage"
+          },
+          {
+            "astId": 7,
+            "contract": "contracts/VotingKeccak.sol:VotingKeccak",
+            "label": "voteCount",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_uint256"
+          }
+        ],
+        "numberOfBytes": "64"
+      },
+      "t_uint256": {
+        "encoding": "inplace",
+        "label": "uint256",
+        "numberOfBytes": "32"
+      }
+    }
+  }
+}

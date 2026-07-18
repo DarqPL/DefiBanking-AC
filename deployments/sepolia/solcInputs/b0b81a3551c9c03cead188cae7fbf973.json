@@ -1,0 +1,37 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/VotingKeccak.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ncontract VotingKeccak {\n    address public immutable owner;\n\n    struct Candidate {\n        string name;\n        uint voteCount;\n    }\n\n    mapping(bytes32 => Candidate) public candidates;\n    mapping(bytes32 => bool) public candidateExists;\n    bytes32[] public candidateIds;\n\n    mapping(address => bool) public hasVoted;\n\n    event Voted(address indexed voter, bytes32 candidateId);\n    event CandidateAdded(bytes32 candidateId, string name);\n\n    error Unauthorized();\n    error AlreadyVoted();\n    error InvalidCandidate();\n\n    modifier onlyOwner() {\n        if (msg.sender != owner) revert Unauthorized();\n        _;\n    }\n\n    constructor() {\n        owner = msg.sender;\n    }\n\n    function addCandidate(string calldata _name) external onlyOwner {\n        bytes32 id = keccak256(abi.encodePacked(_name));\n        if (candidateExists[id]) return;\n\n        candidates[id] = Candidate({ name: _name, voteCount: 0 });\n        candidateIds.push(id);\n        candidateExists[id] = true;\n\n        emit CandidateAdded(id, _name);\n    }\n\n    function vote(bytes32 _candidateId) external {\n        if (hasVoted[msg.sender]) revert AlreadyVoted();\n        if (!candidateExists[_candidateId]) revert InvalidCandidate();\n\n        hasVoted[msg.sender] = true;\n        candidates[_candidateId].voteCount++;\n\n        emit Voted(msg.sender, _candidateId);\n    }\n\n    function getCandidateIds() external view returns (bytes32[] memory) {\n        return candidateIds;\n    }\n\n    function getCandidatesCount() external view returns (uint) {\n        return candidateIds.length;\n    }\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 1000
+    },
+    "viaIR": true,
+    "evmVersion": "paris",
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "storageLayout",
+          "devdoc",
+          "userdoc",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
