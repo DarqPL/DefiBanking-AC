@@ -36,6 +36,11 @@
         "type": "error"
     },
     {
+        "inputs": [],
+        "name": "NotSavingCore",
+        "type": "error"
+    },
+    {
         "inputs": [
             {
                 "internalType": "address",
@@ -98,6 +103,25 @@
             {
                 "indexed": true,
                 "internalType": "address",
+                "name": "recipient",
+                "type": "address"
+            },
+            {
+                "indexed": false,
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "name": "InterestPaid",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "address",
                 "name": "previousOwner",
                 "type": "address"
             },
@@ -122,6 +146,25 @@
             }
         ],
         "name": "Paused",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "oldSavingCore",
+                "type": "address"
+            },
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "newSavingCore",
+                "type": "address"
+            }
+        ],
+        "name": "SavingCoreUpdated",
         "type": "event"
     },
     {
@@ -235,10 +278,41 @@
         "type": "function"
     },
     {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "to",
+                "type": "address"
+            },
+            {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "name": "payInterest",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
         "inputs": [],
         "name": "renounceOwnership",
         "outputs": [],
         "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "savingCore",
+        "outputs": [
+            {
+                "internalType": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
         "type": "function"
     },
     {
@@ -250,6 +324,19 @@
             }
         ],
         "name": "setFeeReceiver",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "newSavingCore",
+                "type": "address"
+            }
+        ],
+        "name": "setSavingCore",
         "outputs": [],
         "stateMutability": "nonpayable",
         "type": "function"

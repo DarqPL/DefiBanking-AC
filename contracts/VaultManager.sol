@@ -19,6 +19,9 @@ contract VaultManager is Ownable, Pausable {
     /// @notice Address that receives early withdrawal penalty fees.
     address public feeReceiver;
 
+    /// @notice SavingCore contract allowed to pay interest from this vault.
+    address public savingCore;
+
     /// @dev Reverts when an address parameter is zero.
     error InvalidAddress();
 
@@ -27,6 +30,17 @@ contract VaultManager is Ownable, Pausable {
 
     /// @dev Reverts when the vault does not have enough token liquidity.
     error InsufficientVaultBalance();
+
+    /// @dev Reverts when a caller is not the configured SavingCore contract.
+    error NotSavingCore();
+
+    /**
+     * @notice Restricts function access to the configured SavingCore contract.
+     */
+    modifier onlySavingCore() {
+        if (msg.sender != savingCore) revert NotSavingCore();
+        _;
+    }
 
     /**
      * @notice Emitted when the fee receiver is updated.
@@ -48,6 +62,20 @@ contract VaultManager is Ownable, Pausable {
      * @param amount Amount of tokens withdrawn.
      */
     event VaultWithdrawn(address indexed recipient, uint256 amount);
+
+    /**
+     * @notice Emitted when the authorized SavingCore contract is updated.
+     * @param oldSavingCore Previous SavingCore address.
+     * @param newSavingCore New SavingCore address.
+     */
+    event SavingCoreUpdated(address indexed oldSavingCore, address indexed newSavingCore);
+
+    /**
+     * @notice Emitted when interest liquidity is paid to a depositor.
+     * @param recipient Address that received the interest payment.
+     * @param amount Amount of interest paid.
+     */
+    event InterestPaid(address indexed recipient, uint256 amount);
 
     /**
      * @notice Initializes the vault with its ERC20 token and initial penalty fee receiver.
@@ -72,6 +100,19 @@ contract VaultManager is Ownable, Pausable {
         feeReceiver = newReceiver;
 
         emit FeeReceiverUpdated(oldReceiver, newReceiver);
+    }
+
+    /**
+     * @notice Updates the SavingCore contract authorized to pay interest from this vault.
+     * @param newSavingCore SavingCore contract address.
+     */
+    function setSavingCore(address newSavingCore) external onlyOwner {
+        if (newSavingCore == address(0)) revert InvalidAddress();
+
+        address oldSavingCore = savingCore;
+        savingCore = newSavingCore;
+
+        emit SavingCoreUpdated(oldSavingCore, newSavingCore);
     }
 
     /**
@@ -102,6 +143,24 @@ contract VaultManager is Ownable, Pausable {
         emit VaultWithdrawn(recipient, amount);
 
         vaultToken.safeTransfer(recipient, amount);
+    }
+
+    /**
+     * @notice Pays interest liquidity to a matured depositor.
+     * @dev Callable only by the configured SavingCore contract.
+     * @param to Recipient of the interest payment.
+     * @param amount Amount of interest to pay.
+     */
+    function payInterest(address to, uint256 amount) external onlySavingCore whenNotPaused {
+        if (to == address(0)) revert InvalidAddress();
+        if (amount == 0) revert ZeroAmount();
+
+        IERC20 vaultToken = token;
+        if (vaultToken.balanceOf(address(this)) < amount) revert InsufficientVaultBalance();
+
+        emit InterestPaid(to, amount);
+
+        vaultToken.safeTransfer(to, amount);
     }
 
     /**

@@ -4,6 +4,7 @@ import "@nomicfoundation/hardhat-verify";
 import "hardhat-contract-sizer";
 import "hardhat-abi-exporter";
 import "hardhat-gas-reporter";
+import "solidity-coverage";
 import * as dotenv from "dotenv";
 import "hardhat-deploy";
 import "hardhat-deploy-ethers";

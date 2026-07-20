@@ -49,6 +49,22 @@ describe("VaultManager", function () {
     expect(await vaultManager.paused()).to.equal(false);
   });
 
+  it("rejects invalid constructor addresses", async function () {
+    const { feeReceiver, mockUSDC, vaultManager } = await deployVaultManagerFixture();
+    const VaultManager = await ethers.getContractFactory("VaultManager");
+
+    await expectCustomError(
+      VaultManager.deploy(ethers.ZeroAddress, feeReceiver.address),
+      vaultManager.interface,
+      "InvalidAddress",
+    );
+    await expectCustomError(
+      VaultManager.deploy(await mockUSDC.getAddress(), ethers.ZeroAddress),
+      vaultManager.interface,
+      "InvalidAddress",
+    );
+  });
+
   it("lets the owner update the fee receiver", async function () {
     const { newFeeReceiver, vaultManager } = await deployVaultManagerFixture();
 
@@ -57,11 +73,29 @@ describe("VaultManager", function () {
     expect(await vaultManager.feeReceiver()).to.equal(newFeeReceiver.address);
   });
 
+  it("lets the owner update the authorized SavingCore address", async function () {
+    const { user, vaultManager } = await deployVaultManagerFixture();
+
+    await vaultManager.setSavingCore(user.address);
+
+    expect(await vaultManager.savingCore()).to.equal(user.address);
+  });
+
   it("rejects invalid fee receiver updates", async function () {
     const { vaultManager } = await deployVaultManagerFixture();
 
     await expectCustomError(
       vaultManager.setFeeReceiver.staticCall(ethers.ZeroAddress),
+      vaultManager.interface,
+      "InvalidAddress",
+    );
+  });
+
+  it("rejects invalid SavingCore updates", async function () {
+    const { vaultManager } = await deployVaultManagerFixture();
+
+    await expectCustomError(
+      vaultManager.setSavingCore.staticCall(ethers.ZeroAddress),
       vaultManager.interface,
       "InvalidAddress",
     );
@@ -140,5 +174,61 @@ describe("VaultManager", function () {
 
     expect(await vaultManager.paused()).to.equal(false);
     expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(amount);
+  });
+
+  it("rejects repeated pause and unpause calls", async function () {
+    const { vaultManager } = await deployVaultManagerFixture();
+
+    await expectCustomError(vaultManager.unpause.staticCall(), vaultManager.interface, "ExpectedPause");
+
+    await vaultManager.pause();
+    await expectCustomError(vaultManager.pause.staticCall(), vaultManager.interface, "EnforcedPause");
+  });
+
+  it("allows only the authorized SavingCore address to pay interest", async function () {
+    const { user, newFeeReceiver, mockUSDC, vaultManager } = await deployVaultManagerFixture();
+    const vaultAddress = await vaultManager.getAddress();
+    const amount = 500n * oneUsdc;
+
+    await mockUSDC.approve(vaultAddress, amount);
+    await vaultManager.fundVault(amount);
+    await vaultManager.setSavingCore(user.address);
+
+    const vaultBefore = await mockUSDC.balanceOf(vaultAddress);
+    const recipientBefore = await mockUSDC.balanceOf(newFeeReceiver.address);
+    await vaultManager.connect(user).payInterest(newFeeReceiver.address, amount);
+
+    expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore - amount);
+    expect(await mockUSDC.balanceOf(newFeeReceiver.address)).to.equal(recipientBefore + amount);
+  });
+
+  it("rejects invalid interest payouts", async function () {
+    const { user, newFeeReceiver, mockUSDC, vaultManager } = await deployVaultManagerFixture();
+    const vaultAddress = await vaultManager.getAddress();
+    const amount = 100n * oneUsdc;
+
+    await mockUSDC.approve(vaultAddress, amount);
+    await vaultManager.fundVault(amount);
+    await vaultManager.setSavingCore(user.address);
+
+    await expectCustomError(
+      vaultManager.connect(newFeeReceiver).payInterest.staticCall(user.address, amount),
+      vaultManager.interface,
+      "NotSavingCore",
+    );
+    await expectCustomError(vaultManager.connect(user).payInterest.staticCall(ethers.ZeroAddress, amount), vaultManager.interface, "InvalidAddress");
+    await expectCustomError(vaultManager.connect(user).payInterest.staticCall(newFeeReceiver.address, 0), vaultManager.interface, "ZeroAmount");
+    await expectCustomError(
+      vaultManager.connect(user).payInterest.staticCall(newFeeReceiver.address, amount + 1n),
+      vaultManager.interface,
+      "InsufficientVaultBalance",
+    );
+
+    await vaultManager.pause();
+    await expectCustomError(
+      vaultManager.connect(user).payInterest.staticCall(newFeeReceiver.address, amount),
+      vaultManager.interface,
+      "EnforcedPause",
+    );
   });
 });
