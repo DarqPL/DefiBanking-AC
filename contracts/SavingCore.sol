@@ -361,8 +361,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
     function openDeposit(uint256 planId, uint256 amount) external whenNotPaused {
         SavingPlan storage plan = _getExistingPlan(planId);
         if (!plan.enabled) revert PlanNotEnabled();
-        if (amount < plan.minDeposit) revert AmountBelowMinimum();
-        if (amount > plan.maxDeposit) revert AmountAboveMaximum();
+        if (amount == 0) revert InvalidAmount();
+        if (plan.minDeposit != 0 && amount < plan.minDeposit) revert AmountBelowMinimum();
+        if (plan.maxDeposit != 0 && amount > plan.maxDeposit) revert AmountAboveMaximum();
 
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(plan.tenorDays) * 1 days);
         uint256 depositId = _storeAndMintDeposit(
@@ -458,7 +459,10 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 oldPrincipal = oldDeposit.principal;
         uint256 interest = _calculateInterest(oldDeposit);
         uint256 newPrincipal = oldPrincipal + interest;
-        if (newPrincipal < newPlan.minDeposit || newPrincipal > newPlan.maxDeposit) revert NewPrincipalOutOfRange();
+        if (
+            (newPlan.minDeposit != 0 && newPrincipal < newPlan.minDeposit)
+                || (newPlan.maxDeposit != 0 && newPrincipal > newPlan.maxDeposit)
+        ) revert NewPrincipalOutOfRange();
 
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
 
@@ -649,8 +653,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         if (tenorDays == 0) revert InvalidTenor();
         if (aprBps > BPS_DENOMINATOR) revert InvalidApr();
         if (earlyWithdrawPenaltyBps > BPS_DENOMINATOR) revert InvalidPenalty();
-        if (minDeposit == 0 || maxDeposit == 0) revert InvalidAmount();
-        if (maxDeposit < minDeposit) revert InvalidPlanRange();
+        if (maxDeposit != 0 && minDeposit > maxDeposit) revert InvalidPlanRange();
     }
 
     /**

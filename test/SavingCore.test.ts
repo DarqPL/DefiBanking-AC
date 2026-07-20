@@ -125,8 +125,6 @@ describe("SavingCore", function () {
       await expectCustomError(savingCore.createPlan.staticCall(0, aprBps, minDeposit, maxDeposit, penaltyBps, true), savingCore.interface, "InvalidTenor");
       await expectCustomError(savingCore.createPlan.staticCall(tenorDays, 10_001, minDeposit, maxDeposit, penaltyBps, true), savingCore.interface, "InvalidApr");
       await expectCustomError(savingCore.createPlan.staticCall(tenorDays, aprBps, minDeposit, maxDeposit, 10_001, true), savingCore.interface, "InvalidPenalty");
-      await expectCustomError(savingCore.createPlan.staticCall(tenorDays, aprBps, 0, maxDeposit, penaltyBps, true), savingCore.interface, "InvalidAmount");
-      await expectCustomError(savingCore.createPlan.staticCall(tenorDays, aprBps, minDeposit, 0, penaltyBps, true), savingCore.interface, "InvalidAmount");
       await expectCustomError(savingCore.createPlan.staticCall(tenorDays, aprBps, maxDeposit, minDeposit, penaltyBps, true), savingCore.interface, "InvalidPlanRange");
       await expectCustomError(
         savingCore.connect(other).createPlan.staticCall(tenorDays, aprBps, minDeposit, maxDeposit, penaltyBps, true),
@@ -151,6 +149,23 @@ describe("SavingCore", function () {
 
       await expectCustomError(SavingCore.deploy(ethers.ZeroAddress, await vaultManager.getAddress()), savingCore.interface, "InvalidAddress");
       await expectCustomError(SavingCore.deploy(await mockUSDC.getAddress(), ethers.ZeroAddress), savingCore.interface, "InvalidAddress");
+    });
+
+    it("allows zero min or max deposit limits to mean no limit", async function () {
+      const { user, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
+
+      await savingCore.createPlan(tenorDays, aprBps, 0, 0, penaltyBps, true);
+      await savingCore.createPlan(tenorDays, aprBps, 0, depositAmount, penaltyBps, true);
+      await savingCore.createPlan(tenorDays, aprBps, depositAmount, 0, penaltyBps, true);
+      await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount * 3n);
+
+      await savingCore.connect(user).openDeposit(1, depositAmount);
+      await savingCore.connect(user).openDeposit(2, depositAmount);
+      await savingCore.connect(user).openDeposit(3, depositAmount);
+
+      expect((await savingCore.deposits(0)).principal).to.equal(depositAmount);
+      expect((await savingCore.deposits(1)).principal).to.equal(depositAmount);
+      expect((await savingCore.deposits(2)).principal).to.equal(depositAmount);
     });
   });
 
@@ -196,6 +211,7 @@ describe("SavingCore", function () {
       await savingCore.enablePlan(0);
       await expectCustomError(savingCore.connect(user).openDeposit.staticCall(0, minDeposit - 1n), savingCore.interface, "AmountBelowMinimum");
       await expectCustomError(savingCore.connect(user).openDeposit.staticCall(0, maxDeposit + 1n), savingCore.interface, "AmountAboveMaximum");
+      await expectCustomError(savingCore.connect(user).openDeposit.staticCall(0, 0), savingCore.interface, "InvalidAmount");
 
       await savingCore.createPlan(2n ** 64n - 1n, aprBps, minDeposit, maxDeposit, penaltyBps, true);
       await expectCustomError(savingCore.connect(user).openDeposit.staticCall(1, depositAmount), savingCore.interface, "MaturityOverflow");

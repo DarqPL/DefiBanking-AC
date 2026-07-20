@@ -12,13 +12,12 @@ describe("MockUSDC", function () {
     return { deployer, user, other, mockUSDC };
   }
 
-  it("sets token metadata and deployer admin", async function () {
-    const { deployer, mockUSDC } = await deployMockUSDCFixture();
+  it("sets token metadata", async function () {
+    const { mockUSDC } = await deployMockUSDCFixture();
 
     expect(await mockUSDC.name()).to.equal("Mock USDC");
     expect(await mockUSDC.symbol()).to.equal("USDC");
     expect(await mockUSDC.decimals()).to.equal(6n);
-    expect(await mockUSDC.admin()).to.equal(deployer.address);
   });
 
   it("mints the initial supply to the deployer", async function () {
@@ -28,7 +27,7 @@ describe("MockUSDC", function () {
     expect(await mockUSDC.balanceOf(deployer.address)).to.equal(initialSupply);
   });
 
-  it("allows the admin to mint tokens", async function () {
+  it("allows the deployer to mint tokens", async function () {
     const { deployer, user, mockUSDC } = await deployMockUSDCFixture();
     const amount = 2_500n * 10n ** 6n;
 
@@ -38,18 +37,13 @@ describe("MockUSDC", function () {
     expect(await mockUSDC.totalSupply()).to.equal(initialSupply + amount);
   });
 
-  it("reverts when a non-admin tries to mint", async function () {
+  it("allows any account to mint tokens for testing", async function () {
     const { user, other, mockUSDC } = await deployMockUSDCFixture();
     const amount = 100n * 10n ** 6n;
 
-    try {
-      await mockUSDC.connect(user).mint.staticCall(other.address, amount);
-      expect.fail("Expected mint to revert");
-    } catch (error) {
-      const data = (error as { data: string | { data: string } }).data;
-      const revertData = typeof data === "string" ? data : data.data;
-      const parsedError = mockUSDC.interface.parseError(revertData);
-      expect(parsedError?.name).to.equal("NotAdmin");
-    }
+    await mockUSDC.connect(user).mint(other.address, amount);
+
+    expect(await mockUSDC.balanceOf(other.address)).to.equal(amount);
+    expect(await mockUSDC.totalSupply()).to.equal(initialSupply + amount);
   });
 });

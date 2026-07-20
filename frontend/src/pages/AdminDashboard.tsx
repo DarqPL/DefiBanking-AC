@@ -37,6 +37,10 @@ function formatUsdc(value: bigint) {
   return `${ethers.formatUnits(value, 6)} USDC`;
 }
 
+function formatDepositLimit(value: bigint, label: "minimum" | "maximum") {
+  return value === 0n ? `No ${label}` : formatUsdc(value);
+}
+
 function parseUsdc(value: string) {
   return ethers.parseUnits(value || "0", 6);
 }
@@ -536,8 +540,8 @@ export default function AdminDashboard() {
                     <td>{plan.id.toString()}</td>
                     <td>{plan.tenorDays.toString()} days</td>
                     <td>{formatBps(plan.aprBps)}</td>
-                    <td>{formatUsdc(plan.minDeposit)}</td>
-                    <td>{formatUsdc(plan.maxDeposit)}</td>
+                    <td>{formatDepositLimit(plan.minDeposit, "minimum")}</td>
+                    <td>{formatDepositLimit(plan.maxDeposit, "maximum")}</td>
                     <td>{formatBps(plan.earlyWithdrawPenaltyBps)}</td>
                     <td>{plan.enabled ? "Enabled" : "Disabled"}</td>
                     <td>

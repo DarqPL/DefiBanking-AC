@@ -8,28 +8,13 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  * @notice Local testing ERC20 token that mimics USDC's 6 decimal precision.
  */
 contract MockUSDC is ERC20 {
-    /// @notice Address allowed to mint test tokens.
-    address public immutable admin;
-
     /// @notice Initial supply minted to the deployer: 1,000,000 USDC with 6 decimals.
     uint256 public constant INITIAL_SUPPLY = 1_000_000 * 10 ** 6;
 
-    /// @dev Reverts when a non-admin account calls an admin-only function.
-    error NotAdmin();
-
     /**
-     * @notice Restricts function access to the admin.
-     */
-    modifier onlyAdmin() {
-        if (msg.sender != admin) revert NotAdmin();
-        _;
-    }
-
-    /**
-     * @notice Sets the deployer as admin and mints the initial supply.
+     * @notice Mints the initial supply to the deployer.
      */
     constructor() ERC20("Mock USDC", "USDC") {
-        admin = msg.sender;
         _mint(msg.sender, INITIAL_SUPPLY);
     }
 
@@ -46,7 +31,7 @@ contract MockUSDC is ERC20 {
      * @param to Recipient of the minted tokens.
      * @param amount Amount to mint using 6 decimal precision.
      */
-    function mint(address to, uint256 amount) external onlyAdmin {
+    function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
 }

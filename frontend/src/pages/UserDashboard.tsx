@@ -41,6 +41,10 @@ function formatUsdc(value: bigint) {
   return `${ethers.formatUnits(value, 6)} USDC`
 }
 
+function formatDepositLimit(value: bigint, label: 'minimum' | 'maximum') {
+  return value === 0n ? `No ${label}` : formatUsdc(value)
+}
+
 function formatApr(aprBps: bigint) {
   return `${Number(aprBps) / 100}%`
 }
@@ -104,7 +108,7 @@ function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: big
         <div>
           <dt>Deposit Range</dt>
           <dd>
-            {formatUsdc(plan.minDeposit)} - {formatUsdc(plan.maxDeposit)}
+            {formatDepositLimit(plan.minDeposit, 'minimum')} - {formatDepositLimit(plan.maxDeposit, 'maximum')}
           </dd>
         </div>
         <div>
