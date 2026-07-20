@@ -1,121 +1,64 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { Link, Route, Routes } from 'react-router-dom'
 import './App.css'
+import AdminDashboard from './pages/AdminDashboard'
+import UserDashboard from './pages/UserDashboard'
+import { useWeb3 } from './Web3Context'
+
+function truncateAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`
+}
 
 function App() {
-  const [count, setCount] = useState(0)
+  const { account, connectWallet, disconnectWallet, isMetaMaskAvailable, isWrongNetwork, switchNetwork } = useWeb3()
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app-shell">
+      <nav className="navbar">
+        <Link className="brand" to="/">
+          DeFi Term Deposit
+        </Link>
 
-      <div className="ticks"></div>
+        <div className="nav-actions">
+          <div className="nav-links">
+            <Link to="/">User Dashboard</Link>
+            <Link to="/admin">Admin Dashboard</Link>
+          </div>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+          {account ? (
+            <div className="wallet-session">
+              <span className="wallet-address">{truncateAddress(account)}</span>
+              <button className="wallet-button" type="button" onClick={disconnectWallet}>
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <button className="wallet-button" type="button" onClick={connectWallet} disabled={!isMetaMaskAvailable}>
+              {isMetaMaskAvailable ? 'Connect Wallet' : 'MetaMask Not Found'}
+            </button>
+          )}
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      </nav>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      {isWrongNetwork ? (
+        <div className="network-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="network-modal-title">
+          <section className="network-modal">
+            <p className="eyebrow">Wrong Network</p>
+            <h1 id="network-modal-title">Switch to Sepolia</h1>
+            <p>Please switch to the Sepolia testnet to use this application.</p>
+            <button className="primary-button" type="button" onClick={() => void switchNetwork()}>
+              Switch to Sepolia
+            </button>
+          </section>
+        </div>
+      ) : (
+        <main className="main-content">
+          <Routes>
+            <Route path="/" element={<UserDashboard />} />
+            <Route path="/admin" element={<AdminDashboard />} />
+          </Routes>
+        </main>
+      )}
+    </div>
   )
 }
 
