@@ -1,67 +1,67 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ethers } from 'ethers'
-import { CONTRACT_ADDRESSES } from '../config'
-import { useWeb3 } from '../Web3Context'
-import { parseTransactionError } from '../utils/parseTransactionError'
+import { useEffect, useMemo, useState } from "react";
+import { ethers } from "ethers";
+import { CONTRACT_ADDRESSES } from "../config";
+import { useWeb3 } from "../Web3Context";
+import { parseTransactionError } from "../utils/parseTransactionError";
 
 type SavingPlan = {
-  id: bigint
-  minDeposit: bigint
-  maxDeposit: bigint
-  tenorDays: bigint
-  aprBps: bigint
-  earlyWithdrawPenaltyBps: bigint
-  enabled: boolean
-}
+  id: bigint;
+  minDeposit: bigint;
+  maxDeposit: bigint;
+  tenorDays: bigint;
+  aprBps: bigint;
+  earlyWithdrawPenaltyBps: bigint;
+  enabled: boolean;
+};
 
 type DepositInfo = {
-  id: bigint
-  planId: bigint
-  principal: bigint
-  startAt: bigint
-  maturityAt: bigint
-  aprBpsAtOpen: bigint
-  penaltyBpsAtOpen: bigint
-  status: bigint
-}
+  id: bigint;
+  planId: bigint;
+  principal: bigint;
+  startAt: bigint;
+  maturityAt: bigint;
+  aprBpsAtOpen: bigint;
+  penaltyBpsAtOpen: bigint;
+  status: bigint;
+};
 
 const DEPOSIT_STATUS: Record<string, string> = {
-  '0': 'None',
-  '1': 'Active',
-  '2': 'Withdrawn',
-  '3': 'Early Withdrawn',
-  '4': 'Manual Renewed',
-  '5': 'Auto Renewed',
-}
+  "0": "None",
+  "1": "Active",
+  "2": "Withdrawn",
+  "3": "Early Withdrawn",
+  "4": "Manual Renewed",
+  "5": "Auto Renewed",
+};
 
-const DEPLOYMENT_BLOCK = 11_310_735
-const CHUNK_SIZE = 10_000
+const DEPLOYMENT_BLOCK = 11_313_284;
+const CHUNK_SIZE = 10_000;
 
 function formatUsdc(value: bigint) {
-  return `${ethers.formatUnits(value, 6)} USDC`
+  return `${ethers.formatUnits(value, 6)} USDC`;
 }
 
-function formatDepositLimit(value: bigint, label: 'minimum' | 'maximum') {
-  return value === 0n ? `No ${label}` : formatUsdc(value)
+function formatDepositLimit(value: bigint, label: "minimum" | "maximum") {
+  return value === 0n ? `No ${label}` : formatUsdc(value);
 }
 
 function formatApr(aprBps: bigint) {
-  return `${Number(aprBps) / 100}%`
+  return `${Number(aprBps) / 100}%`;
 }
 
 function formatDate(timestamp: bigint) {
-  return new Date(Number(timestamp) * 1000).toLocaleString()
+  return new Date(Number(timestamp) * 1000).toLocaleString();
 }
 
 function normalizePlan(id: bigint, plan: unknown): SavingPlan {
   const values = plan as {
-    minDeposit: bigint
-    maxDeposit: bigint
-    tenorDays: bigint
-    aprBps: bigint
-    earlyWithdrawPenaltyBps: bigint
-    enabled: boolean
-  }
+    minDeposit: bigint;
+    maxDeposit: bigint;
+    tenorDays: bigint;
+    aprBps: bigint;
+    earlyWithdrawPenaltyBps: bigint;
+    enabled: boolean;
+  };
 
   return {
     id,
@@ -71,19 +71,19 @@ function normalizePlan(id: bigint, plan: unknown): SavingPlan {
     aprBps: values.aprBps,
     earlyWithdrawPenaltyBps: values.earlyWithdrawPenaltyBps,
     enabled: values.enabled,
-  }
+  };
 }
 
 function normalizeDeposit(id: bigint, deposit: unknown): DepositInfo {
   const values = deposit as {
-    planId: bigint
-    principal: bigint
-    startAt: bigint
-    maturityAt: bigint
-    aprBpsAtOpen: bigint
-    penaltyBpsAtOpen: bigint
-    status: bigint
-  }
+    planId: bigint;
+    principal: bigint;
+    startAt: bigint;
+    maturityAt: bigint;
+    aprBpsAtOpen: bigint;
+    penaltyBpsAtOpen: bigint;
+    status: bigint;
+  };
 
   return {
     id,
@@ -94,7 +94,7 @@ function normalizeDeposit(id: bigint, deposit: unknown): DepositInfo {
     aprBpsAtOpen: values.aprBpsAtOpen,
     penaltyBpsAtOpen: values.penaltyBpsAtOpen,
     status: values.status,
-  }
+  };
 }
 
 function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: bigint) => void }) {
@@ -108,7 +108,7 @@ function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: big
         <div>
           <dt>Deposit Range</dt>
           <dd>
-            {formatDepositLimit(plan.minDeposit, 'minimum')} - {formatDepositLimit(plan.maxDeposit, 'maximum')}
+            {formatDepositLimit(plan.minDeposit, "minimum")} - {formatDepositLimit(plan.maxDeposit, "maximum")}
           </dd>
         </div>
         <div>
@@ -120,7 +120,7 @@ function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: big
         Select Plan
       </button>
     </article>
-  )
+  );
 }
 
 function OpenDepositForm({
@@ -132,13 +132,13 @@ function OpenDepositForm({
   onAmountChange,
   onSubmit,
 }: {
-  plans: SavingPlan[]
-  selectedPlanId: string
-  amount: string
-  isBusy: boolean
-  onPlanChange: (planId: string) => void
-  onAmountChange: (amount: string) => void
-  onSubmit: () => void
+  plans: SavingPlan[];
+  selectedPlanId: string;
+  amount: string;
+  isBusy: boolean;
+  onPlanChange: (planId: string) => void;
+  onAmountChange: (amount: string) => void;
+  onSubmit: () => void;
 }) {
   return (
     <section className="section-panel">
@@ -174,7 +174,7 @@ function OpenDepositForm({
         </button>
       </div>
     </section>
-  )
+  );
 }
 
 function DepositCard({
@@ -188,26 +188,26 @@ function DepositCard({
   onWithdraw,
   onRenew,
 }: {
-  deposit: DepositInfo
-  plans: SavingPlan[]
-  now: bigint
-  isBusy: boolean
-  renewPlanId: string
-  onRenewPlanChange: (depositId: string, planId: string) => void
-  onEarlyWithdraw: (depositId: bigint) => void
-  onWithdraw: (depositId: bigint) => void
-  onRenew: (depositId: bigint) => void
+  deposit: DepositInfo;
+  plans: SavingPlan[];
+  now: bigint;
+  isBusy: boolean;
+  renewPlanId: string;
+  onRenewPlanChange: (depositId: string, planId: string) => void;
+  onEarlyWithdraw: (depositId: bigint) => void;
+  onWithdraw: (depositId: bigint) => void;
+  onRenew: (depositId: bigint) => void;
 }) {
-  const isActive = deposit.status === 1n
-  const isMatured = now >= deposit.maturityAt
-  const earlyPenalty = (deposit.principal * deposit.penaltyBpsAtOpen) / 10_000n
-  const earlyReceiveAmount = deposit.principal - earlyPenalty
+  const isActive = deposit.status === 1n;
+  const isMatured = now >= deposit.maturityAt;
+  const earlyPenalty = (deposit.principal * deposit.penaltyBpsAtOpen) / 10_000n;
+  const earlyReceiveAmount = deposit.principal - earlyPenalty;
 
   return (
     <article className="deposit-card">
       <div className="card-heading-row">
         <h3>Deposit #{deposit.id.toString()}</h3>
-        <span className="pill">{DEPOSIT_STATUS[deposit.status.toString()] ?? 'Unknown'}</span>
+        <span className="pill">{DEPOSIT_STATUS[deposit.status.toString()] ?? "Unknown"}</span>
       </div>
       <dl className="meta-list">
         <div>
@@ -233,10 +233,15 @@ function DepositCard({
           {!isMatured ? (
             <>
               <p className="early-warning">
-                Warning: Early withdrawal incurs a {formatApr(deposit.penaltyBpsAtOpen)} penalty. You will lose {formatUsdc(earlyPenalty)} and
-                receive {formatUsdc(earlyReceiveAmount)}.
+                Warning: Early withdrawal incurs a {formatApr(deposit.penaltyBpsAtOpen)} penalty. You will lose{" "}
+                {formatUsdc(earlyPenalty)} and receive {formatUsdc(earlyReceiveAmount)}.
               </p>
-              <button className="secondary-button danger-button" type="button" onClick={() => onEarlyWithdraw(deposit.id)} disabled={isBusy}>
+              <button
+                className="secondary-button danger-button"
+                type="button"
+                onClick={() => onEarlyWithdraw(deposit.id)}
+                disabled={isBusy}
+              >
                 Early Withdraw
               </button>
             </>
@@ -256,7 +261,12 @@ function DepositCard({
                   </option>
                 ))}
               </select>
-              <button className="secondary-button" type="button" onClick={() => onRenew(deposit.id)} disabled={isBusy || plans.length === 0}>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => onRenew(deposit.id)}
+                disabled={isBusy || plans.length === 0}
+              >
                 Renew
               </button>
             </>
@@ -264,155 +274,158 @@ function DepositCard({
         </div>
       )}
     </article>
-  )
+  );
 }
 
 export default function UserDashboard() {
-  const { account, provider, contracts } = useWeb3()
-  const { mockUSDC, savingCore } = contracts
-  const [plans, setPlans] = useState<SavingPlan[]>([])
-  const [deposits, setDeposits] = useState<DepositInfo[]>([])
-  const [selectedPlanId, setSelectedPlanId] = useState('')
-  const [depositAmountInput, setDepositAmountInput] = useState('')
-  const [renewPlanByDeposit, setRenewPlanByDeposit] = useState<Record<string, string>>({})
-  const [now, setNow] = useState<bigint>(BigInt(Math.floor(Date.now() / 1000)))
-  const [isLoading, setIsLoading] = useState(false)
-  const [txStatus, setTxStatus] = useState('')
-  const [errorMessage, setErrorMessage] = useState('')
+  const { account, provider, contracts } = useWeb3();
+  const { mockUSDC, savingCore } = contracts;
+  const [plans, setPlans] = useState<SavingPlan[]>([]);
+  const [deposits, setDeposits] = useState<DepositInfo[]>([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [depositAmountInput, setDepositAmountInput] = useState("");
+  const [renewPlanByDeposit, setRenewPlanByDeposit] = useState<Record<string, string>>({});
+  const [now, setNow] = useState<bigint>(BigInt(Math.floor(Date.now() / 1000)));
+  const [isLoading, setIsLoading] = useState(false);
+  const [txStatus, setTxStatus] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const activePlans = useMemo(() => plans.filter((plan) => plan.enabled), [plans])
-  const isTxBusy = txStatus.length > 0
+  const activePlans = useMemo(() => plans.filter((plan) => plan.enabled), [plans]);
+  const isTxBusy = txStatus.length > 0;
 
   function parseError(error: unknown) {
-    return parseTransactionError(error, savingCore, null, mockUSDC)
+    return parseTransactionError(error, savingCore, null, mockUSDC);
   }
 
   async function refreshDashboard() {
-    if (!savingCore) return
+    if (!savingCore) return;
 
-    setIsLoading(true)
-    setErrorMessage('')
+    setIsLoading(true);
+    setErrorMessage("");
 
     try {
-      const nextPlanId = (await savingCore.nextPlanId()) as bigint
-      const fetchedPlans: SavingPlan[] = []
+      const nextPlanId = (await savingCore.nextPlanId()) as bigint;
+      const fetchedPlans: SavingPlan[] = [];
 
       for (let planId = 0n; planId < nextPlanId; planId += 1n) {
-        const plan = normalizePlan(planId, await savingCore.savingPlans(planId))
-        if (plan.enabled) fetchedPlans.push(plan)
+        const plan = normalizePlan(planId, await savingCore.savingPlans(planId));
+        if (plan.enabled) fetchedPlans.push(plan);
       }
 
-      setPlans(fetchedPlans)
-      setSelectedPlanId((current) => current || fetchedPlans[0]?.id.toString() || '')
+      setPlans(fetchedPlans);
+      setSelectedPlanId((current) => current || fetchedPlans[0]?.id.toString() || "");
 
-      const latestBlock = await provider?.getBlock('latest')
-      setNow(BigInt(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000)))
+      const latestBlock = await provider?.getBlock("latest");
+      setNow(BigInt(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000)));
 
       if (!account) {
-        setDeposits([])
-        return
+        setDeposits([]);
+        return;
       }
 
       if (!provider) {
-        setDeposits([])
-        return
+        setDeposits([]);
+        return;
       }
 
-      const filter = savingCore.filters.DepositOpened(null, account)
-      const latestBlockNumber = await provider.getBlockNumber()
-      const events = []
+      const filter = savingCore.filters.DepositOpened(null, account);
+      const latestBlockNumber = await provider.getBlockNumber();
+      const events = [];
 
       for (let fromBlock = DEPLOYMENT_BLOCK; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
-        const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber)
-        const chunk = await savingCore.queryFilter(filter, fromBlock, toBlock)
-        events.push(...chunk)
+        const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber);
+        const chunk = await savingCore.queryFilter(filter, fromBlock, toBlock);
+        events.push(...chunk);
       }
 
       const fetchedDeposits = await Promise.all(
         events.map(async (event) => {
-          if (!('args' in event) || !event.args) return null
-          const depositId = (event.args as { depositId: bigint }).depositId
-          return normalizeDeposit(depositId, await savingCore.deposits(depositId))
-        }),
-      )
+          if (!("args" in event) || !event.args) return null;
+          const depositId = (event.args as { depositId: bigint }).depositId;
+          return normalizeDeposit(depositId, await savingCore.deposits(depositId));
+        })
+      );
 
-      setDeposits(fetchedDeposits.filter((deposit): deposit is DepositInfo => Boolean(deposit)))
+      setDeposits(fetchedDeposits.filter((deposit): deposit is DepositInfo => Boolean(deposit)));
     } catch (error) {
-      setErrorMessage(parseError(error))
+      setErrorMessage(parseError(error));
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 
   async function runTransaction(label: string, action: () => Promise<ethers.TransactionResponse>) {
-    setErrorMessage('')
-    setTxStatus(label)
+    setErrorMessage("");
+    setTxStatus(label);
 
     try {
-      const tx = await action()
-      setTxStatus('Waiting for confirmation...')
-      await tx.wait()
-      await refreshDashboard()
+      const tx = await action();
+      setTxStatus("Waiting for confirmation...");
+      await tx.wait();
+      await refreshDashboard();
     } catch (error) {
-      setErrorMessage(parseError(error))
+      setErrorMessage(parseError(error));
     } finally {
-      setTxStatus('')
+      setTxStatus("");
     }
   }
 
   async function handleOpenDeposit() {
-    if (!account || !mockUSDC || !savingCore || !selectedPlanId || !depositAmountInput) return
+    if (!account || !mockUSDC || !savingCore || !selectedPlanId || !depositAmountInput) return;
 
-    const parsedAmount = ethers.parseUnits(depositAmountInput, 6)
-    const savingCoreAddress = CONTRACT_ADDRESSES.SavingCore
+    const parsedAmount = ethers.parseUnits(depositAmountInput, 6);
+    const savingCoreAddress = CONTRACT_ADDRESSES.SavingCore;
 
-    setErrorMessage('')
-    setTxStatus('Checking allowance...')
+    setErrorMessage("");
+    setTxStatus("Checking allowance...");
 
     try {
-      const currentAllowance = (await mockUSDC.allowance(account, savingCoreAddress)) as bigint
+      const currentAllowance = (await mockUSDC.allowance(account, savingCoreAddress)) as bigint;
 
       if (currentAllowance < parsedAmount) {
-        setTxStatus('Approving...')
-        const approvalTx = await mockUSDC.approve(savingCoreAddress, parsedAmount)
-        await approvalTx.wait()
+        setTxStatus("Approving...");
+        const approvalTx = await mockUSDC.approve(savingCoreAddress, parsedAmount);
+        await approvalTx.wait();
 
-        const newAllowance = (await mockUSDC.allowance(account, savingCoreAddress)) as bigint
+        const newAllowance = (await mockUSDC.allowance(account, savingCoreAddress)) as bigint;
         if (newAllowance < parsedAmount) {
-          throw new Error('Insufficient allowance approved. Please approve the full amount to proceed.')
+          throw new Error("Insufficient allowance approved. Please approve the full amount to proceed.");
         }
       }
 
-      setTxStatus('Depositing...')
-      const depositTx = await savingCore.openDeposit(BigInt(selectedPlanId), parsedAmount)
-      await depositTx.wait()
+      setTxStatus("Depositing...");
+      const depositTx = await savingCore.openDeposit(BigInt(selectedPlanId), parsedAmount);
+      await depositTx.wait();
 
-      setDepositAmountInput('')
-      await refreshDashboard()
+      setDepositAmountInput("");
+      await refreshDashboard();
     } catch (error) {
-      setErrorMessage(parseError(error))
+      setErrorMessage(parseError(error));
     } finally {
-      setTxStatus('')
+      setTxStatus("");
     }
   }
 
   function handleRenewPlanChange(depositId: string, planId: string) {
-    setRenewPlanByDeposit((current) => ({ ...current, [depositId]: planId }))
+    setRenewPlanByDeposit((current) => ({ ...current, [depositId]: planId }));
   }
 
   function handleRenew(depositId: bigint) {
-    if (!savingCore) return
+    if (!savingCore) return;
 
-    const fallbackPlanId = activePlans[0]?.id.toString()
-    const selectedRenewPlanId = renewPlanByDeposit[depositId.toString()] ?? fallbackPlanId
-    if (!selectedRenewPlanId) return
+    const fallbackPlanId = activePlans[0]?.id.toString();
+    const selectedRenewPlanId = renewPlanByDeposit[depositId.toString()] ?? fallbackPlanId;
+    if (!selectedRenewPlanId) return;
 
-    void runTransaction('Renewing...', () => savingCore.renewDeposit(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>)
+    void runTransaction(
+      "Renewing...",
+      () => savingCore.renewDeposit(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>
+    );
   }
 
   useEffect(() => {
-    void refreshDashboard()
-  }, [account, provider, savingCore])
+    void refreshDashboard();
+  }, [account, provider, savingCore]);
 
   return (
     <div className="dashboard-grid">
@@ -422,7 +435,9 @@ export default function UserDashboard() {
         <p>Open fixed-term USDC deposits, monitor live status, and manage maturity actions from one place.</p>
       </section>
 
-      {!account && <p className="status-message">Connect your wallet to open deposits and view your deposit history.</p>}
+      {!account && (
+        <p className="status-message">Connect your wallet to open deposits and view your deposit history.</p>
+      )}
       {isLoading && <p className="status-message">Loading contract data...</p>}
       {txStatus && <p className="status-message">{txStatus}</p>}
       {errorMessage && <p className="error-message">{errorMessage}</p>}
@@ -436,7 +451,13 @@ export default function UserDashboard() {
           {activePlans.length === 0 ? (
             <p>No enabled plans found.</p>
           ) : (
-            activePlans.map((plan) => <PlanCard key={plan.id.toString()} plan={plan} onSelect={(planId) => setSelectedPlanId(planId.toString())} />)
+            activePlans.map((plan) => (
+              <PlanCard
+                key={plan.id.toString()}
+                plan={plan}
+                onSelect={(planId) => setSelectedPlanId(planId.toString())}
+              />
+            ))
           )}
         </div>
       </section>
@@ -467,13 +488,19 @@ export default function UserDashboard() {
                 plans={activePlans}
                 now={now}
                 isBusy={isTxBusy}
-                renewPlanId={renewPlanByDeposit[deposit.id.toString()] ?? activePlans[0]?.id.toString() ?? ''}
+                renewPlanId={renewPlanByDeposit[deposit.id.toString()] ?? activePlans[0]?.id.toString() ?? ""}
                 onRenewPlanChange={handleRenewPlanChange}
                 onEarlyWithdraw={(depositId) =>
-                  void runTransaction('Withdrawing early...', () => savingCore?.earlyWithdraw(depositId) as Promise<ethers.TransactionResponse>)
+                  void runTransaction(
+                    "Withdrawing early...",
+                    () => savingCore?.earlyWithdraw(depositId) as Promise<ethers.TransactionResponse>
+                  )
                 }
                 onWithdraw={(depositId) =>
-                  void runTransaction('Withdrawing at maturity...', () => savingCore?.withdrawAtMaturity(depositId) as Promise<ethers.TransactionResponse>)
+                  void runTransaction(
+                    "Withdrawing at maturity...",
+                    () => savingCore?.withdrawAtMaturity(depositId) as Promise<ethers.TransactionResponse>
+                  )
                 }
                 onRenew={handleRenew}
               />
@@ -482,5 +509,5 @@ export default function UserDashboard() {
         </div>
       </section>
     </div>
-  )
+  );
 }
