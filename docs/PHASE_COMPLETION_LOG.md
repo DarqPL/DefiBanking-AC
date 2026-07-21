@@ -52,6 +52,7 @@ Files added or updated:
 - `package.json` adds `npm run bot:auto-renew:sepolia`.
 - `.env_example` documents `BOT_PRIVATE_KEY`, `CRON_SECRET`, and optional RPC URL variables.
 - `hardhat.config.ts` supports optional `SEPOLIA_RPC_URL` and `MAINNET_RPC_URL`, and does not require private keys for local compile/test tasks.
+- `vercel.json` keeps the Vercel project root at the repository root for `/api/auto-renew`, while building and serving the frontend from `frontend/dist`.
 
 APR behavior confirmed:
 
@@ -80,6 +81,13 @@ Bot scan boundary fix:
 - The Vercel endpoint and fallback Hardhat script now scan deposit IDs from `0` to `nextDepositId - 1`.
 - This matches `SavingCore.nextDepositId`, where a value of `3` means existing deposit IDs are `0`, `1`, and `2`.
 - Sepolia dry-run verification after the fix reported `checked: 3`, `eligible: 0`, `renewed: 0`, and `failed: 0`.
+
+Vercel root/frontend configuration:
+
+- Added root `vercel.json` so Vercel deploys root `api/auto-renew.ts` while building the frontend from `frontend/`.
+- Frontend output is served from `frontend/dist`.
+- Non-API routes rewrite to `/index.html` for the Vite SPA, while `/api/*` remains handled by Vercel API functions.
+- Verification: `npm.cmd run build` from `frontend/` passed, `api/auto-renew.ts` TypeScript check passed, and `npm.cmd run compile` passed.
 
 ## Verification Run: 2026-07-20
 

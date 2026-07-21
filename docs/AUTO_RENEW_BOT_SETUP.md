@@ -27,10 +27,11 @@ The bot wallet must have Sepolia ETH for gas.
 ## Vercel Setup
 
 1. Deploy this repository to Vercel.
-2. Make sure the Vercel project root is the repository root, not only `frontend/`, so the root `api/` folder is deployed.
-3. Add `BOT_PRIVATE_KEY`, `CRON_SECRET`, and optionally `SEPOLIA_RPC_URL` in Vercel environment variables.
-4. Redeploy after adding or changing environment variables.
-5. Test the endpoint manually with dry-run mode:
+2. Keep the Vercel project root as the repository root, not `frontend/`, so the root `api/` folder is deployed.
+3. Use the root `vercel.json` to build the frontend from `frontend/` and serve `frontend/dist`.
+4. Add `BOT_PRIVATE_KEY`, `CRON_SECRET`, and optionally `SEPOLIA_RPC_URL` in Vercel environment variables.
+5. Redeploy after adding or changing environment variables.
+6. Test the endpoint manually with dry-run mode:
 
 ```text
 https://<your-project-name>.vercel.app/api/auto-renew?secret=<CRON_SECRET>&dryRun=1
@@ -65,6 +66,12 @@ Expected response shape:
   "results": []
 }
 ```
+
+The root `vercel.json` keeps both pieces working together:
+
+- `/api/auto-renew` is served by the root Vercel API function.
+- `/` and other frontend routes are served from `frontend/dist`.
+- Non-API routes rewrite to `/index.html` for the Vite single-page app.
 
 ## cron-job.org Setup
 
