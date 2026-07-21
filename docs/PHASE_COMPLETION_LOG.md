@@ -28,7 +28,7 @@ This file tracks which phases from `doc/PHASED_PROJECT_PLAN.md` have been comple
 | Phase 11: Security, Gas, and Code Quality Pass | Completed | Contracts use OpenZeppelin, `SafeERC20`, custom errors, events, NatSpec, status checks, and pass the full test suite. Gas data is emitted during `npm.cmd test`. |
 | Phase 12: Hardhat Test Suite and Coverage | Completed | `npm.cmd test` passes with `39 passing`; `npx.cmd hardhat coverage` reports `100%` statements, functions, and lines, with `92.97%` branch coverage. |
 | Phase 13: Deployment Scripts and Local Demo Data | Completed | Contracts were redeployed after spec-alignment fixes, frontend addresses were updated, and deploy scripts remain correct. |
-| Phase 14: Frontend Demo Implementation | Partially Completed | React frontend exists, accepts zero min/max values, displays zero limits as unlimited, and `npm.cmd run build` passes. Lint and manual MetaMask flow still need final verification. |
+| Phase 14: Frontend Demo Implementation | Partially Completed | React frontend exists, accepts zero min/max values, displays zero limits as unlimited, and both `npm.cmd run lint` and `npm.cmd run build` pass. Manual MetaMask flow still needs final verification. |
 | Phase 15: Base README and Runbook | Not Started | Root `README.md` is still the sample Hardhat README and needs replacement. |
 | Phase 16: Deferred Section 8 Design and Improvement Pass | Deferred | Section 8 brainstorming and final structural improvements are intentionally postponed until after the base implementation is complete. |
 | Phase 17: Bonus Challenge Implementation, Optional | Deferred | No bonus challenge should be treated as selected until Phase 16 decisions are made. |
@@ -276,7 +276,7 @@ Verification:
 
 ### Frontend Build and Lint Result
 
-Status: Build passed, lint failed
+Status: Build passed, lint passed after fixes on 2026-07-21
 
 Commands run:
 
@@ -289,24 +289,39 @@ Build result:
 - Vite generated `dist/` successfully.
 - Non-blocking warning: the main JavaScript chunk is larger than `500 kB` after minification.
 
-Lint result:
+Lint result after fixes:
 
-- Failed with `6 errors` and `4 warnings`.
+- Passed with `0` reported problems.
 
-Frontend fixes needed:
+What was fixed:
 
 - `frontend/src/Web3Context.tsx`:
-  - Avoid direct synchronous `setProvider(nextProvider)` inside `useEffect` or adjust structure to satisfy `react-hooks/set-state-in-effect`.
-  - Fix missing dependency warning for `connectWallet` in `useMemo`, likely by stabilizing callbacks or restructuring context value creation.
-  - Move `useWeb3` to a separate file or adjust exports because `react-refresh/only-export-components` complains about exporting non-components from a component file.
+  - Moved the exported context object into `frontend/src/Web3ContextObject.ts` so the provider component file only exports a component.
+  - Moved `useWeb3` into `frontend/src/useWeb3.ts`.
+  - Wrapped wallet/network functions in `useCallback` and updated memo dependencies.
+  - Removed direct synchronous provider state updates from the mount effect and deferred the initial network check.
 - `frontend/src/pages/AdminDashboard.tsx`:
-  - Avoid effect pattern that directly calls a state-setting function in `useEffect` according to `react-hooks/set-state-in-effect`.
-  - Fix missing dependency warnings for `parseError` and `refreshAdminData`, likely by stabilizing functions or restructuring effects.
+  - Wrapped `parseError`, `refreshAdminData`, and `runTransaction` in `useCallback`.
+  - Updated effect dependency arrays.
+  - Deferred admin data refresh from the effect body with `queueMicrotask`.
 - `frontend/src/pages/UserDashboard.tsx`:
-  - Replace render-time `Date.now()` usage in `useState` initialization.
-  - Avoid `Date.now()` in places flagged by `react-hooks/purity`; prefer block timestamp from provider or a controlled state update outside render-sensitive code.
-  - Avoid effect pattern that directly calls a state-setting function in `useEffect` according to `react-hooks/set-state-in-effect`.
-  - Fix missing dependency warning for `refreshDashboard`.
+  - Replaced render-time `Date.now()` initialization with `0n`.
+  - Uses latest provider block timestamp for the UI clock when available.
+  - Wrapped `parseError`, `refreshDashboard`, and `runTransaction` in `useCallback`.
+  - Updated effect dependency arrays and deferred dashboard refresh from the effect body with `queueMicrotask`.
+- `frontend/src/App.tsx`:
+  - Updated the `useWeb3` import after the hook split.
+
+Verification after fixes:
+
+- `npm.cmd run lint` from `frontend/`: passed.
+- `npm.cmd run build` from `frontend/`: passed.
+- Build warning remains non-blocking: Vite reports the main chunk is larger than `500 kB`.
+
+Frontend fixes still needed:
+
+- Manual MetaMask demo verification is still pending.
+- Verify wrong-network handling, wallet rejection handling, user flows, admin flows, and pending transaction states in the browser.
 
 Frontend demo suggestions:
 
@@ -456,7 +471,7 @@ Remaining follow-up:
 - Verify MetaMask connection, wrong-network handling, user rejection handling, and pending transaction states.
 - Verify user flows: view plans, open deposit, view active deposits, withdraw, and renew.
 - Verify admin flows if they are intended for the demo.
-- Fix lint errors if using lint as part of final quality criteria.
+- Keep `npm.cmd run lint` passing if more frontend changes are made.
 
 ### README Baseline
 
@@ -520,6 +535,5 @@ Remaining follow-up:
 ## Immediate Next Updates To Record
 
 - Sepolia redeployment result after latest contract changes, if using Sepolia for demo.
-- Result of fixing and rerunning `npm.cmd run lint` in `frontend/`.
 - Manual MetaMask demo result for user and admin dashboards.
 - Base README/runbook completion.

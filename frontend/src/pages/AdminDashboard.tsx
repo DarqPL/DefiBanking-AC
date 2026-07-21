@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { Link } from "react-router-dom";
 import { CONTRACT_ADDRESSES } from "../config";
-import { useWeb3 } from "../Web3Context";
+import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
 
 type SavingPlan = {
@@ -95,11 +95,11 @@ export default function AdminDashboard() {
 
   const isBusy = isLoading || txStatus.length > 0 || !account;
 
-  function parseError(error: unknown) {
+  const parseError = useCallback((error: unknown) => {
     return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
-  }
+  }, [mockUSDC, savingCore, vaultManager]);
 
-  async function refreshAdminData() {
+  const refreshAdminData = useCallback(async () => {
     if (!mockUSDC || !savingCore || !vaultManager) return;
 
     setIsLoading(true);
@@ -133,13 +133,13 @@ export default function AdminDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [mockUSDC, parseError, savingCore, vaultManager]);
 
-  async function runTransaction(
+  const runTransaction = useCallback(async (
     label: string,
     action: () => Promise<ethers.TransactionResponse>,
     successMessage = "Transaction confirmed."
-  ) {
+  ) => {
     setTxStatus(label);
     setErrorMessage("");
     setAlertMessage("");
@@ -155,7 +155,7 @@ export default function AdminDashboard() {
     } finally {
       setTxStatus("");
     }
-  }
+  }, [parseError, refreshAdminData]);
 
   async function handleFundVault() {
     if (!mockUSDC || !vaultManager || !fundAmount) return;
@@ -294,11 +294,13 @@ export default function AdminDashboard() {
     return () => {
       isMounted = false;
     };
-  }, [account, savingCore]);
+  }, [account, parseError, savingCore]);
 
   useEffect(() => {
-    if (isAdmin) void refreshAdminData();
-  }, [isAdmin, account, mockUSDC, savingCore, vaultManager]);
+    if (!isAdmin) return;
+
+    queueMicrotask(() => void refreshAdminData());
+  }, [isAdmin, refreshAdminData]);
 
   if (isAdmin === null) {
     return (

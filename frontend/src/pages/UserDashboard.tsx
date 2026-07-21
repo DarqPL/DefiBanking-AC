@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES } from "../config";
-import { useWeb3 } from "../Web3Context";
+import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
 
 type SavingPlan = {
@@ -285,7 +285,7 @@ export default function UserDashboard() {
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [depositAmountInput, setDepositAmountInput] = useState("");
   const [renewPlanByDeposit, setRenewPlanByDeposit] = useState<Record<string, string>>({});
-  const [now, setNow] = useState<bigint>(BigInt(Math.floor(Date.now() / 1000)));
+  const [now, setNow] = useState<bigint>(0n);
   const [isLoading, setIsLoading] = useState(false);
   const [txStatus, setTxStatus] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -293,11 +293,11 @@ export default function UserDashboard() {
   const activePlans = useMemo(() => plans.filter((plan) => plan.enabled), [plans]);
   const isTxBusy = txStatus.length > 0;
 
-  function parseError(error: unknown) {
+  const parseError = useCallback((error: unknown) => {
     return parseTransactionError(error, savingCore, null, mockUSDC);
-  }
+  }, [mockUSDC, savingCore]);
 
-  async function refreshDashboard() {
+  const refreshDashboard = useCallback(async () => {
     if (!savingCore) return;
 
     setIsLoading(true);
@@ -316,7 +316,9 @@ export default function UserDashboard() {
       setSelectedPlanId((current) => current || fetchedPlans[0]?.id.toString() || "");
 
       const latestBlock = await provider?.getBlock("latest");
-      setNow(BigInt(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000)));
+      if (latestBlock) {
+        setNow(BigInt(latestBlock.timestamp));
+      }
 
       if (!account) {
         setDeposits([]);
@@ -352,9 +354,9 @@ export default function UserDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [account, parseError, provider, savingCore]);
 
-  async function runTransaction(label: string, action: () => Promise<ethers.TransactionResponse>) {
+  const runTransaction = useCallback(async (label: string, action: () => Promise<ethers.TransactionResponse>) => {
     setErrorMessage("");
     setTxStatus(label);
 
@@ -368,7 +370,7 @@ export default function UserDashboard() {
     } finally {
       setTxStatus("");
     }
-  }
+  }, [parseError, refreshDashboard]);
 
   async function handleOpenDeposit() {
     if (!account || !mockUSDC || !savingCore || !selectedPlanId || !depositAmountInput) return;
@@ -424,8 +426,8 @@ export default function UserDashboard() {
   }
 
   useEffect(() => {
-    void refreshDashboard();
-  }, [account, provider, savingCore]);
+    queueMicrotask(() => void refreshDashboard());
+  }, [refreshDashboard]);
 
   return (
     <div className="dashboard-grid">

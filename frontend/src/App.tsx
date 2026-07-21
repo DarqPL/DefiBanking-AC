@@ -2,7 +2,7 @@ import { Link, Route, Routes } from 'react-router-dom'
 import './App.css'
 import AdminDashboard from './pages/AdminDashboard'
 import UserDashboard from './pages/UserDashboard'
-import { useWeb3 } from './Web3Context'
+import { useWeb3 } from './useWeb3'
 
 function truncateAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
