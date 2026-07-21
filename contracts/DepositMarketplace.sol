@@ -88,7 +88,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      */
     struct Listing {
         address seller;
-        uint256 price;
+        uint96 price;
     }
 
     /// @notice Active listing by deposit NFT id.
@@ -103,11 +103,8 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
     /// @notice Cursor used by repeated cleanup calls to avoid always scanning from index zero.
     uint256 public cleanupCursor;
 
-    /// @dev Listing transfer guard: expected seller while receiving the escrow NFT.
-    address private expectedSeller;
-
-    /// @dev Listing transfer guard: expected deposit id while receiving the escrow NFT.
-    uint256 private expectedDepositId;
+    /// @dev Listing transfer guard: expected deposit id plus one while receiving the escrow NFT.
+    uint256 private expectedDepositIdPlusOne;
 
     /// @dev Reverts when an address parameter is zero.
     error InvalidAddress();
@@ -210,21 +207,21 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
         whenNotPaused
         nonReentrant
     {
-        if (price == 0) revert InvalidPrice();
+        if (price == 0 || price > type(uint96).max) revert InvalidPrice();
         if (acceptedTermsHash != currentTermsHash) revert InvalidTerms();
         if (listingIndexPlusOne[depositId] != 0) revert AlreadyListed();
         if (savingCore.ownerOf(depositId) != msg.sender) revert NotDepositOwner();
-        if (!_isActive(depositId)) revert DepositNotActive();
-        if (_isRestricted(depositId)) revert RestrictedWindow();
 
-        listings[depositId] = Listing({seller: msg.sender, price: price});
+        (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
+        if (status != ISavingCoreMarketplace.DepositStatus.Active) revert DepositNotActive();
+        if (_isRestricted(startAt, maturityAt)) revert RestrictedWindow();
+
+        listings[depositId] = Listing({seller: msg.sender, price: uint96(price)});
         _addListing(depositId);
 
-        expectedSeller = msg.sender;
-        expectedDepositId = depositId;
+        expectedDepositIdPlusOne = depositId + 1;
         savingCore.safeTransferFrom(msg.sender, address(this), depositId);
-        expectedSeller = address(0);
-        expectedDepositId = 0;
+        expectedDepositIdPlusOne = 0;
 
         emit Listed(depositId, msg.sender, price, acceptedTermsHash);
     }
@@ -237,8 +234,9 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
         Listing memory listing = listings[depositId];
         if (listing.seller == address(0)) revert ListingNotFound();
         if (listing.seller == msg.sender) revert SelfBuyNotAllowed();
-        if (!_isActive(depositId)) revert DepositNotActive();
-        if (_isRestricted(depositId)) revert RestrictedWindow();
+        (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
+        if (status != ISavingCoreMarketplace.DepositStatus.Active) revert DepositNotActive();
+        if (_isRestricted(startAt, maturityAt)) revert RestrictedWindow();
         if (savingCore.ownerOf(depositId) != address(this)) revert NotEscrowed();
 
         _removeListing(depositId);
@@ -326,7 +324,8 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @param depositId Deposit NFT id to check.
      */
     function isListable(uint256 depositId) public view returns (bool) {
-        return _isActive(depositId) && !_isRestricted(depositId);
+        (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
+        return status == ISavingCoreMarketplace.DepositStatus.Active && !_isRestricted(startAt, maturityAt);
     }
 
     /**
@@ -336,9 +335,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
     function noListingDays(uint256 depositId) public view returns (uint256 daysCount) {
         (,, uint64 startAt, uint64 maturityAt,,,) = savingCore.deposits(depositId);
         uint256 tenorDays = (uint256(maturityAt) - startAt) / 1 days;
-        daysCount = (tenorDays * NO_LISTING_PERCENT) / 100;
-        if (daysCount < MIN_NO_LISTING_DAYS) return MIN_NO_LISTING_DAYS;
-        if (daysCount > MAX_NO_LISTING_DAYS) return MAX_NO_LISTING_DAYS;
+        daysCount = _noListingDaysFromTenor(tenorDays);
     }
 
     /**
@@ -385,7 +382,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
     {
         if (msg.sender != address(savingCore)) revert InvalidNFT();
         if (from == address(0)) revert RenewalMintRejected();
-        if (from != expectedSeller || tokenId != expectedDepositId) revert DirectTransferRejected();
+        if (expectedDepositIdPlusOne != tokenId + 1) revert DirectTransferRejected();
 
         return IERC721Receiver.onERC721Received.selector;
     }
@@ -425,17 +422,19 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
     /**
      * @dev Returns true when a deposit status is Active.
      */
-    function _isActive(uint256 depositId) private view returns (bool) {
-        (,,,,,, ISavingCoreMarketplace.DepositStatus status) = savingCore.deposits(depositId);
-        return status == ISavingCoreMarketplace.DepositStatus.Active;
+    function _depositState(uint256 depositId)
+        private
+        view
+        returns (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status)
+    {
+        (,, startAt, maturityAt,,, status) = savingCore.deposits(depositId);
     }
 
     /**
      * @dev Returns true when a deposit is inside or past the marketplace restricted window.
      */
-    function _isRestricted(uint256 depositId) private view returns (bool) {
-        (,, uint64 startAt, uint64 maturityAt,,,) = savingCore.deposits(depositId);
-        uint256 blockedAt = uint256(maturityAt) - (noListingDaysFromTimestamps(startAt, maturityAt) * 1 days);
+    function _isRestricted(uint64 startAt, uint64 maturityAt) private view returns (bool) {
+        uint256 blockedAt = uint256(maturityAt) - (_noListingDaysFromTimestamps(startAt, maturityAt) * 1 days);
         return block.timestamp >= blockedAt;
     }
 
@@ -443,7 +442,8 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @dev Returns true when a listing should be removed by cleanup.
      */
     function _isStale(uint256 depositId) private view returns (bool) {
-        return !_isActive(depositId) || _isRestricted(depositId) || !_isEscrowed(depositId);
+        (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
+        return status != ISavingCoreMarketplace.DepositStatus.Active || _isRestricted(startAt, maturityAt) || !_isEscrowed(depositId);
     }
 
     /**
@@ -460,8 +460,15 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
     /**
      * @dev Calculates no-listing days from deposit timestamps.
      */
-    function noListingDaysFromTimestamps(uint64 startAt, uint64 maturityAt) private pure returns (uint256 daysCount) {
+    function _noListingDaysFromTimestamps(uint64 startAt, uint64 maturityAt) private pure returns (uint256 daysCount) {
         uint256 tenorDays = (uint256(maturityAt) - startAt) / 1 days;
+        daysCount = _noListingDaysFromTenor(tenorDays);
+    }
+
+    /**
+     * @dev Applies the marketplace no-listing formula to a tenor in days.
+     */
+    function _noListingDaysFromTenor(uint256 tenorDays) private pure returns (uint256 daysCount) {
         daysCount = (tenorDays * NO_LISTING_PERCENT) / 100;
         if (daysCount < MIN_NO_LISTING_DAYS) return MIN_NO_LISTING_DAYS;
         if (daysCount > MAX_NO_LISTING_DAYS) return MAX_NO_LISTING_DAYS;
