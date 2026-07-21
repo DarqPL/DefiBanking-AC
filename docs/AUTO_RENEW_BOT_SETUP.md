@@ -1,0 +1,112 @@
+# Auto-Renew Bot Setup
+
+## Selected Design
+
+The auto-renew bot now uses a Vercel API endpoint plus cron-job.org.
+
+- `api/auto-renew.ts` exposes `/api/auto-renew` on Vercel.
+- cron-job.org calls the endpoint every 15 minutes.
+- The endpoint connects to Sepolia, scans active deposits, and calls `SavingCore.autoRenewDeposit(depositId)` for eligible deposits.
+- `.github/workflows/auto-renew-bot.yml` remains as a 15-minute scheduled fallback in case Vercel or cron-job.org goes down.
+
+This design is preferred as the primary bot because GitHub scheduled workflows can be delayed by the shared execution queue. The GitHub workflow is still useful as a backup runner.
+
+## Required Environment Variables
+
+Configure these in Vercel Project Settings > Environment Variables:
+
+- `BOT_PRIVATE_KEY`: Private key of the Sepolia bot wallet that pays gas.
+- `CRON_SECRET`: Secret used to protect `/api/auto-renew` from public calls.
+
+Optional:
+
+- `SEPOLIA_RPC_URL`: Custom Sepolia RPC URL. If omitted, the endpoint uses the public Sepolia RPC from the code.
+
+The bot wallet must have Sepolia ETH for gas.
+
+## Vercel Setup
+
+1. Deploy this repository to Vercel.
+2. Make sure the Vercel project root is the repository root, not only `frontend/`, so the root `api/` folder is deployed.
+3. Add `BOT_PRIVATE_KEY`, `CRON_SECRET`, and optionally `SEPOLIA_RPC_URL` in Vercel environment variables.
+4. Redeploy after adding or changing environment variables.
+5. Test the endpoint manually with dry-run mode:
+
+```text
+https://<your-project-name>.vercel.app/api/auto-renew?secret=<CRON_SECRET>&dryRun=1
+```
+
+Expected response shape:
+
+```json
+{
+  "mode": "dry-run",
+  "network": "sepolia",
+  "checked": 1,
+  "eligible": 0,
+  "renewed": 0,
+  "failed": 0,
+  "results": []
+}
+```
+
+## cron-job.org Setup
+
+1. Create a free account at `https://cron-job.org`.
+2. Create a new cron job.
+3. Set the URL to:
+
+```text
+https://<your-project-name>.vercel.app/api/auto-renew?secret=<CRON_SECRET>
+```
+
+4. Set the schedule to every 15 minutes.
+5. Use `GET` as the request method.
+6. Enable notifications for failed runs if desired.
+7. Save and run the job once manually to confirm it works.
+
+## Endpoint Security
+
+The endpoint rejects requests unless one of these matches `CRON_SECRET`:
+
+- Query string: `?secret=<CRON_SECRET>`.
+- Header: `x-cron-secret: <CRON_SECRET>`.
+- Authorization header: `Bearer <CRON_SECRET>`.
+
+cron-job.org can use the query-string version for easiest setup. If a different scheduler supports custom headers, the header options are cleaner because the secret is not visible in the URL.
+
+## Bot Behavior
+
+For each request, the endpoint:
+
+- Reads `SavingCore.nextDepositId()`.
+- Scans deposit IDs from `1` to `nextDepositId - 1`.
+- Reads each deposit from `SavingCore.deposits(depositId)`.
+- Skips deposits that are not `Active`.
+- Checks `block.timestamp >= maturityAt + AUTO_RENEW_GRACE_PERIOD`.
+- Calls `autoRenewDeposit(depositId)` for eligible deposits.
+- Continues scanning even if one renewal fails.
+- Returns a JSON summary with checked, eligible, renewed, and failed counts.
+
+The full-scan design is simple and appropriate for the current assignment/demo deployment. A production deployment with many deposits should use event indexing, batching, or a dedicated keeper/indexer.
+
+## Timing Notes
+
+The bot cannot renew at the exact second of the grace-period deadline. cron-job.org calls the endpoint every 15 minutes, and the renewal transaction still needs to be mined. The practical behavior is renewal shortly after `maturityAt + AUTO_RENEW_GRACE_PERIOD`.
+
+## Dead Bot Case
+
+If cron-job.org, Vercel, or the bot wallet fails, deposits do not lose principal or earned interest. They remain active until someone interacts with them.
+
+The contract keeps `autoRenewDeposit` permissionless, so any caller can trigger an eligible auto-renewal. The NFT owner can also withdraw at maturity or manually renew before auto-renew is executed.
+
+## APR Rule
+
+Admin APR updates do not change the APR of an already active deposit. Each deposit stores `aprBpsAtOpen`, and interest for that term is calculated from that snapshot.
+
+Manual renew and auto-renew intentionally use different APR rules:
+
+- Manual renew creates a new deposit using the selected new plan's current APR.
+- Auto-renew creates a new deposit using the old deposit's original APR snapshot.
+
+This matches the assignment rule that auto-renew protects the user from an admin lowering the APR before the bot renews the deposit.

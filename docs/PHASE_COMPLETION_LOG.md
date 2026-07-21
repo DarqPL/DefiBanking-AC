@@ -24,7 +24,7 @@ This file tracks which phases from `doc/PHASED_PROJECT_PLAN.md` have been comple
 | Phase 7: Maturity Withdrawal Flow | Completed | `withdrawAtMaturity` exists and is covered by passing tests for interest math, ownership, maturity timing, and invalid withdrawals. |
 | Phase 8: Early Withdrawal Flow | Completed | `earlyWithdraw` exists and is covered by passing tests for the `6.5%` penalty, fee receiver payout, zero/full penalty branches, and invalid withdrawals. |
 | Phase 9: Manual Renewal Flow | Completed | `renewDeposit` exists and is covered by passing tests for compounding, status update, invalid renewals, and zero-interest renewal behavior. |
-| Phase 10: Auto-Renewal Flow | Completed | `autoRenewDeposit` exists and is covered by passing tests for the student-specific `3-day` grace period, permissionless triggering, and APR preservation. A free GitHub Actions bot now triggers eligible Sepolia auto-renewals every 15 minutes. |
+| Phase 10: Auto-Renewal Flow | Completed | `autoRenewDeposit` exists and is covered by passing tests for the student-specific `3-day` grace period, permissionless triggering, and APR preservation. A Vercel API endpoint plus cron-job.org now triggers eligible Sepolia auto-renewals every 15 minutes. |
 | Phase 11: Security, Gas, and Code Quality Pass | Completed | Contracts use OpenZeppelin, `SafeERC20`, custom errors, events, NatSpec, status checks, and pass the full test suite. Gas data is emitted during `npm.cmd test`. |
 | Phase 12: Hardhat Test Suite and Coverage | Completed | `npm.cmd test` passes with `39 passing`; `npx.cmd hardhat coverage` reports `100%` statements, functions, and lines, with `92.97%` branch coverage. |
 | Phase 13: Deployment Scripts and Local Demo Data | Completed | Contracts were redeployed after spec-alignment fixes, frontend addresses were updated, and deploy scripts remain correct. |
@@ -45,12 +45,13 @@ Status: Completed
 
 Files added or updated:
 
-- `scripts/autoRenewBot.ts` scans deployed Sepolia deposits and calls `autoRenewDeposit` for active deposits whose grace period has ended.
-- `.github/workflows/auto-renew-bot.yml` runs the bot every 15 minutes and supports manual `workflow_dispatch` runs.
+- `api/auto-renew.ts` exposes the Vercel `/api/auto-renew` endpoint that scans deployed Sepolia deposits and calls `autoRenewDeposit` for active deposits whose grace period has ended.
+- `docs/AUTO_RENEW_BOT_SETUP.md` records the selected Vercel API plus cron-job.org design, setup requirements, dead-bot behavior, and APR rules.
+- `.github/workflows/auto-renew-bot.yml` remains available as a 15-minute scheduled fallback and supports manual `workflow_dispatch` runs.
+- `scripts/autoRenewBot.ts` remains available as a local/manual Hardhat fallback.
 - `package.json` adds `npm run bot:auto-renew:sepolia`.
-- `.env_example` documents optional RPC URL variables.
+- `.env_example` documents `BOT_PRIVATE_KEY`, `CRON_SECRET`, and optional RPC URL variables.
 - `hardhat.config.ts` supports optional `SEPOLIA_RPC_URL` and `MAINNET_RPC_URL`, and does not require private keys for local compile/test tasks.
-- `docs/AUTO_RENEW_BOT_SUGGESTION.md` records the selected bot design, setup requirements, dead-bot behavior, and APR rules.
 
 APR behavior confirmed:
 
@@ -60,13 +61,17 @@ APR behavior confirmed:
 
 Operational notes:
 
-- GitHub secret `BOT_PRIVATE_KEY` is required for the bot wallet.
-- GitHub secret `SEPOLIA_RPC_URL` is optional; the public Sepolia RPC is used if omitted.
-- The bot cannot renew at the exact second because GitHub Actions is scheduled and transactions must be mined. It renews as soon as practical after the grace period.
+- Vercel environment variable `BOT_PRIVATE_KEY` is required for the bot wallet.
+- Vercel environment variable `CRON_SECRET` is required to protect the public API endpoint.
+- Vercel environment variable `SEPOLIA_RPC_URL` is optional; the endpoint uses a public Sepolia RPC if omitted.
+- cron-job.org should call `https://<your-project-name>.vercel.app/api/auto-renew?secret=<CRON_SECRET>` every 15 minutes.
+- The bot cannot renew at the exact second because cron-job.org calls periodically and transactions must be mined. It renews as soon as practical after the grace period.
 
 Verification after bot implementation:
 
 - `npm.cmd run compile`: passed.
+- `npx.cmd tsc --noEmit --target es2020 --module commonjs --moduleResolution node --esModuleInterop --resolveJsonModule --skipLibCheck api/auto-renew.ts`: passed.
+- Local Vercel API handler dry run with `CRON_SECRET`, dummy `BOT_PRIVATE_KEY`, and `dryRun=1`: passed, checked the Sepolia deployment without sending transactions, found `0` eligible deposits.
 - `$env:AUTO_RENEW_DRY_RUN="1"; npm.cmd run bot:auto-renew:sepolia; $env:AUTO_RENEW_DRY_RUN=$null`: passed, checked the Sepolia deployment without sending transactions, found `0` eligible deposits.
 - `npm.cmd test`: passed with `39 passing`.
 
