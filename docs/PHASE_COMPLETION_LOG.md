@@ -29,10 +29,10 @@ This file tracks which phases from `doc/PHASED_PROJECT_PLAN.md` have been comple
 | Phase 12: Hardhat Test Suite and Coverage | Completed | `npm.cmd test` passes with `39 passing`; `npx.cmd hardhat coverage` reports `100%` statements, functions, and lines, with `92.97%` branch coverage. |
 | Phase 13: Deployment Scripts and Local Demo Data | Completed | Contracts were redeployed after spec-alignment fixes, frontend addresses were updated, and deploy scripts remain correct. |
 | Phase 14: Frontend Demo Implementation | Partially Completed | React frontend exists, accepts zero min/max values, displays zero limits as unlimited, shows estimated deposit interest, and both `npm.cmd run lint` and `npm.cmd run build` pass. MetaMask checks passed for wallet, network, plan viewing, approval, opening deposits, viewing deposits, and early withdrawal; maturity/renewal browser checks are impractical with the long tenor and remain covered by tests. |
-| Phase 15: Base README and Runbook | Not Started | Root `README.md` is still the sample Hardhat README and needs replacement. |
-| Phase 16: Deferred Section 8 Design and Improvement Pass | Deferred | Section 8 brainstorming and final structural improvements are intentionally postponed until after the base implementation is complete. |
-| Phase 17: Bonus Challenge Implementation, Optional | Deferred | No bonus challenge should be treated as selected until Phase 16 decisions are made. |
-| Phase 18: Final README and Design Answers | Deferred | Final design answers depend on Phase 16 and any optional improvements. |
+| Phase 15: Base README and Runbook | Completed | Root `README.md` now documents the project overview, privacy-preserving student variant values ending `71`, architecture, setup, commands, deployment, frontend usage, auto-renew bot, and verification summary. |
+| Phase 16: Deferred Section 8 Design and Improvement Pass | Completed | Section 8 design decisions were finalized for the current base implementation without adding structural bonus changes. |
+| Phase 17: Bonus Challenge Implementation, Optional | Deferred | No bonus challenge has been selected or implemented. |
+| Phase 18: Final README and Design Answers | Completed | Root `README.md` now includes final Section 8 design answers matching the current code. |
 | Phase 19: End-to-End Verification | Not Started | Compile, test, coverage, deploy, frontend build, and local demo verification need to be run and recorded. |
 | Phase 20: Demo Video Preparation | Not Started | Demo video preparation has not been completed. |
 | Phase 21: Final Submission Checklist | Not Started | Final submission readiness has not been completed. |
@@ -489,13 +489,16 @@ Remaining follow-up:
 - Verify any remaining admin flows intended for the demo.
 - Keep `npm.cmd run lint` passing if more frontend changes are made.
 
-### README Baseline
+### README and Design Answers
 
-Status: Not Started
+Status: Completed
 
 What was done:
 
-- Root README has been inspected and is still the default sample Hardhat README.
+- Replaced the default sample Hardhat README with a project-specific runbook.
+- Documented only the student ID ending `71` for privacy.
+- Included personal variant values, contract architecture, user flows, admin flows, setup, commands, deployment, frontend usage, auto-renew bot notes, verification summary, and Section 8 design answers.
+- Omitted extra demo-video, final checklist, and known-limitations sections because they were not needed in the README at this point.
 
 Evidence:
 
@@ -503,8 +506,7 @@ Evidence:
 
 Remaining follow-up:
 
-- Replace root README with base runbook after base implementation is verified.
-- Later, after Section 8 is completed, add final design answers.
+- Keep README command outputs and deployed addresses current if contracts or frontend configuration change again.
 
 ## Future Update Template
 
@@ -551,5 +553,4 @@ Remaining follow-up:
 ## Immediate Next Updates To Record
 
 - Sepolia redeployment result after latest contract changes, if using Sepolia for demo.
-- Manual MetaMask demo result for user and admin dashboards.
-- Base README/runbook completion.
+- Keep README current if more verification or deployment work is completed.

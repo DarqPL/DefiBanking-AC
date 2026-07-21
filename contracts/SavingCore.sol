@@ -596,7 +596,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             status: DepositStatus.Active
         });
 
-        _mint(account, depositId);
+        _safeMint(account, depositId);
     }
 
     /**

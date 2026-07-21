@@ -258,6 +258,20 @@ describe("SavingCore", function () {
       expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore);
       await expectCustomError(savingCore.connect(user).withdrawAtMaturity.staticCall(0), savingCore.interface, "DepositNotActive");
     });
+
+    it("lets the transferred deposit NFT owner withdraw at maturity", async function () {
+      const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+
+      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
+      expect(await savingCore.ownerOf(0)).to.equal(other.address);
+
+      await expectCustomError(savingCore.connect(user).withdrawAtMaturity.staticCall(0), savingCore.interface, "NotDepositOwner");
+      await time.increase(Number(tenorSeconds));
+
+      await savingCore.connect(other).withdrawAtMaturity(0);
+      expect((await savingCore.deposits(0)).status).to.equal(2n);
+    });
   });
 
   describe("Early Withdraw", function () {
@@ -312,6 +326,17 @@ describe("SavingCore", function () {
       await time.increase(Number(tenorSeconds));
       await expectCustomError(savingCore.connect(user).earlyWithdraw.staticCall(0), savingCore.interface, "AlreadyMatured");
     });
+
+    it("lets the transferred deposit NFT owner withdraw early", async function () {
+      const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+
+      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
+
+      await expectCustomError(savingCore.connect(user).earlyWithdraw.staticCall(0), savingCore.interface, "NotDepositOwner");
+      await savingCore.connect(other).earlyWithdraw(0);
+      expect((await savingCore.deposits(0)).status).to.equal(3n);
+    });
   });
 
   describe("Renewals", function () {
@@ -362,6 +387,21 @@ describe("SavingCore", function () {
       await savingCore.createPlan(365, 400, depositAmount * 2n, maxDeposit, 300, true);
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 4), savingCore.interface, "NewPrincipalOutOfRange");
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(99, 1), savingCore.interface, "DepositNotFound");
+    });
+
+    it("lets the transferred deposit NFT owner manually renew at maturity", async function () {
+      const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
+
+      await time.increase(Number(tenorSeconds));
+
+      await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "NotDepositOwner");
+      await savingCore.connect(other).renewDeposit(0, 1);
+
+      expect((await savingCore.deposits(0)).status).to.equal(4n);
+      expect(await savingCore.ownerOf(1)).to.equal(other.address);
     });
 
     it("auto-renews permissionlessly after the 3-day grace period and preserves original economics", async function () {
