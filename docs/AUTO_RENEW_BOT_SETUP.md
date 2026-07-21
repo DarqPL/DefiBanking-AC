@@ -97,7 +97,7 @@ cron-job.org can use the query-string version for easiest setup. If a different 
 For each request, the endpoint:
 
 - Reads `SavingCore.nextDepositId()`.
-- Scans deposit IDs from `1` to `nextDepositId - 1`.
+- Scans deposit IDs from `0` to `nextDepositId - 1` because the first deposit NFT id is `0`.
 - Reads each deposit from `SavingCore.deposits(depositId)`.
 - Skips deposits that are not `Active`.
 - Checks `block.timestamp >= maturityAt + AUTO_RENEW_GRACE_PERIOD`.

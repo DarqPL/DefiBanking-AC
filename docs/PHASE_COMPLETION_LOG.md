@@ -75,6 +75,12 @@ Verification after bot implementation:
 - `$env:AUTO_RENEW_DRY_RUN="1"; npm.cmd run bot:auto-renew:sepolia; $env:AUTO_RENEW_DRY_RUN=$null`: passed, checked the Sepolia deployment without sending transactions, found `0` eligible deposits.
 - `npm.cmd test`: passed with `39 passing`.
 
+Bot scan boundary fix:
+
+- The Vercel endpoint and fallback Hardhat script now scan deposit IDs from `0` to `nextDepositId - 1`.
+- This matches `SavingCore.nextDepositId`, where a value of `3` means existing deposit IDs are `0`, `1`, and `2`.
+- Sepolia dry-run verification after the fix reported `checked: 3`, `eligible: 0`, `renewed: 0`, and `failed: 0`.
+
 ## Verification Run: 2026-07-20
 
 ### Student ID Personal Variant

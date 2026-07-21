@@ -75,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let renewed = 0;
   let failed = 0;
 
-  for (let depositId = 1n; depositId < nextDepositId; depositId++) {
+  for (let depositId = 0n; depositId < nextDepositId; depositId++) {
     checked += 1;
 
     const deposit = await savingCore.deposits(depositId);

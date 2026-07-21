@@ -35,7 +35,7 @@ async function main() {
   console.log(`SavingCore: ${savingCoreDeployment.address}`);
   console.log(`Latest block timestamp: ${latestBlock.timestamp}`);
 
-  for (let depositId = 1n; depositId < nextDepositId; depositId++) {
+  for (let depositId = 0n; depositId < nextDepositId; depositId++) {
     checked += 1;
 
     const deposit = await savingCore.deposits(depositId);
