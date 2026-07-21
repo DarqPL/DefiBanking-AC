@@ -36,6 +36,22 @@ The bot wallet must have Sepolia ETH for gas.
 https://<your-project-name>.vercel.app/api/auto-renew?secret=<CRON_SECRET>&dryRun=1
 ```
 
+If `CRON_SECRET` contains special URL characters such as `#`, `&`, `?`, `%`, `+`, or spaces, URL-encode it before putting it in the query string. Otherwise the browser may split or truncate the secret and the endpoint will return `Unauthorized`.
+
+For example, this secret:
+
+```text
+abc#123&xyz
+```
+
+must be sent as:
+
+```text
+abc%23123%26xyz
+```
+
+The endpoint also accepts `?cronSecret=<CRON_SECRET>`, an `x-cron-secret` header, or an `Authorization: Bearer <CRON_SECRET>` header.
+
 Expected response shape:
 
 ```json
@@ -70,6 +86,7 @@ https://<your-project-name>.vercel.app/api/auto-renew?secret=<CRON_SECRET>
 The endpoint rejects requests unless one of these matches `CRON_SECRET`:
 
 - Query string: `?secret=<CRON_SECRET>`.
+- Query string: `?cronSecret=<CRON_SECRET>`.
 - Header: `x-cron-secret: <CRON_SECRET>`.
 - Authorization header: `Bearer <CRON_SECRET>`.
 

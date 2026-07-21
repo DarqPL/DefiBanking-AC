@@ -20,14 +20,19 @@ function firstValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function normalizeSecret(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 function isAuthorized(req: VercelRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = normalizeSecret(process.env.CRON_SECRET);
   if (!cronSecret) return false;
 
-  const querySecret = firstValue(req.query.secret);
-  const headerSecret = firstValue(req.headers["x-cron-secret"]);
-  const authorization = firstValue(req.headers.authorization);
-  const bearerSecret = authorization?.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : undefined;
+  const querySecret = normalizeSecret(firstValue(req.query.secret) ?? firstValue(req.query.cronSecret));
+  const headerSecret = normalizeSecret(firstValue(req.headers["x-cron-secret"]));
+  const authorization = normalizeSecret(firstValue(req.headers.authorization));
+  const bearerSecret = authorization?.startsWith("Bearer ") ? normalizeSecret(authorization.slice("Bearer ".length)) : undefined;
 
   return querySecret === cronSecret || headerSecret === cronSecret || bearerSecret === cronSecret;
 }
@@ -40,7 +45,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json({
+      error: "Unauthorized",
+      hint: "Pass ?secret=<CRON_SECRET> or an x-cron-secret/Bearer header that exactly matches the Vercel CRON_SECRET value.",
+    });
   }
 
   const botPrivateKey = process.env.BOT_PRIVATE_KEY;
