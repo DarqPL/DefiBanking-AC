@@ -63,6 +63,11 @@ describe("VaultManager", function () {
       vaultManager.interface,
       "InvalidAddress",
     );
+    await expectCustomError(
+      VaultManager.deploy(ethers.ZeroAddress, ethers.ZeroAddress),
+      vaultManager.interface,
+      "InvalidAddress",
+    );
   });
 
   it("lets the owner update the fee receiver", async function () {
@@ -155,6 +160,13 @@ describe("VaultManager", function () {
       vaultManager.interface,
       "OwnableUnauthorizedAccount",
     );
+    await expectCustomError(
+      vaultManager.connect(user).setSavingCore.staticCall(newFeeReceiver.address),
+      vaultManager.interface,
+      "OwnableUnauthorizedAccount",
+    );
+    await expectCustomError(vaultManager.connect(user).pause.staticCall(), vaultManager.interface, "OwnableUnauthorizedAccount");
+    await expectCustomError(vaultManager.connect(user).unpause.staticCall(), vaultManager.interface, "OwnableUnauthorizedAccount");
   });
 
   it("lets the owner pause and unpause vault token movement", async function () {

@@ -6,7 +6,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @notice Minimal SavingCore interface used by DepositMarketplace.
@@ -60,7 +59,7 @@ interface ISavingCoreMarketplace {
  * @title DepositMarketplace
  * @notice Escrow marketplace for authentic SavingCore term-deposit NFTs.
  */
-contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGuard {
+contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     /// @notice Lower bound for the restricted no-listing window in days.
@@ -205,7 +204,6 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
     function listDeposit(uint256 depositId, uint256 price, bytes32 acceptedTermsHash)
         external
         whenNotPaused
-        nonReentrant
     {
         if (price == 0 || price > type(uint96).max) revert InvalidPrice();
         if (acceptedTermsHash != currentTermsHash) revert InvalidTerms();
@@ -230,14 +228,13 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @notice Buys a listed deposit NFT with the configured payment token.
      * @param depositId Deposit NFT listing to buy.
      */
-    function buyDeposit(uint256 depositId) external whenNotPaused nonReentrant {
+    function buyDeposit(uint256 depositId) external whenNotPaused {
         Listing memory listing = listings[depositId];
         if (listing.seller == address(0)) revert ListingNotFound();
         if (listing.seller == msg.sender) revert SelfBuyNotAllowed();
         (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
         if (status != ISavingCoreMarketplace.DepositStatus.Active) revert DepositNotActive();
         if (_isRestricted(startAt, maturityAt)) revert RestrictedWindow();
-        if (savingCore.ownerOf(depositId) != address(this)) revert NotEscrowed();
 
         _removeListing(depositId);
 
@@ -251,11 +248,10 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @notice Cancels a listing and returns the deposit NFT to the seller.
      * @param depositId Deposit NFT listing to cancel.
      */
-    function cancelListing(uint256 depositId) external nonReentrant {
+    function cancelListing(uint256 depositId) external {
         Listing memory listing = listings[depositId];
         if (listing.seller == address(0)) revert ListingNotFound();
         if (listing.seller != msg.sender) revert NotSeller();
-        if (savingCore.ownerOf(depositId) != address(this)) revert NotEscrowed();
 
         _removeListing(depositId);
         savingCore.safeTransferFrom(address(this), listing.seller, depositId);
@@ -268,7 +264,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @param maxListings Maximum listing slots to scan during this call.
      * @return cleaned Number of stale listings removed.
      */
-    function cleanExpiredListings(uint256 maxListings) external nonReentrant returns (uint256 cleaned) {
+    function cleanExpiredListings(uint256 maxListings) external returns (uint256 cleaned) {
         if (maxListings == 0) revert InvalidMaxListings();
 
         uint256 checked;
@@ -284,9 +280,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
                 Listing memory listing = listings[depositId];
                 _removeListing(depositId);
 
-                if (_isEscrowed(depositId)) {
-                    savingCore.safeTransferFrom(address(this), listing.seller, depositId);
-                }
+                savingCore.safeTransferFrom(address(this), listing.seller, depositId);
 
                 emit ListingExpired(depositId, listing.seller);
                 unchecked {
@@ -309,7 +303,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @param depositId Deposit NFT id to recover.
      * @param recipient Account that should receive the NFT.
      */
-    function recoverUnlistedDeposit(uint256 depositId, address recipient) external onlyOwner nonReentrant {
+    function recoverUnlistedDeposit(uint256 depositId, address recipient) external onlyOwner {
         if (recipient == address(0)) revert InvalidAddress();
         if (listingIndexPlusOne[depositId] != 0) revert AlreadyListed();
         if (savingCore.ownerOf(depositId) != address(this)) revert NotEscrowed();
@@ -400,8 +394,6 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      */
     function _removeListing(uint256 depositId) private {
         uint256 indexPlusOne = listingIndexPlusOne[depositId];
-        if (indexPlusOne == 0) revert ListingNotFound();
-
         uint256 index = indexPlusOne - 1;
         uint256 lastIndex = listedDepositIds.length - 1;
 
@@ -450,11 +442,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable, ReentrancyGua
      * @dev Returns true when the marketplace currently owns a deposit NFT.
      */
     function _isEscrowed(uint256 depositId) private view returns (bool) {
-        try savingCore.ownerOf(depositId) returns (address owner) {
-            return owner == address(this);
-        } catch {
-            return false;
-        }
+        return savingCore.ownerOf(depositId) == address(this);
     }
 
     /**

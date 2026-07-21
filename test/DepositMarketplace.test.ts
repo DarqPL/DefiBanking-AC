@@ -174,6 +174,11 @@ describe("DepositMarketplace", function () {
       await savingCore.connect(seller).approve(marketplaceAddress, depositId);
       await expectCustomError(marketplace.connect(seller).listDeposit.staticCall(depositId, 0, termsHash), marketplace.interface, "InvalidPrice");
       await expectCustomError(
+        marketplace.connect(seller).listDeposit.staticCall(depositId, (1n << 96n), termsHash),
+        marketplace.interface,
+        "InvalidPrice",
+      );
+      await expectCustomError(
         marketplace.connect(seller).listDeposit.staticCall(depositId, salePrice, otherTermsHash),
         marketplace.interface,
         "InvalidTerms",
@@ -331,6 +336,25 @@ describe("DepositMarketplace", function () {
       expect(await marketplace.listedCount()).to.equal(0n);
       expect(await marketplace.cleanExpiredListings.staticCall(10)).to.equal(0n);
     });
+
+    it("skips valid listings during cleanup and advances the cursor", async function () {
+      const { seller, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
+      const depositId = await openDeposit();
+      await listDeposit(depositId);
+
+      expect(await marketplace.cleanExpiredListings.staticCall(1)).to.equal(0n);
+      await marketplace.cleanExpiredListings(1);
+
+      expect(await marketplace.cleanupCursor()).to.equal(1n);
+      expect(await marketplace.listedCount()).to.equal(1n);
+      expect(await savingCore.ownerOf(depositId)).to.equal(marketplaceAddress);
+
+      await marketplace.cleanExpiredListings(1);
+      expect(await marketplace.cleanupCursor()).to.equal(1n);
+
+      await marketplace.connect(seller).cancelListing(depositId);
+      expect(await savingCore.ownerOf(depositId)).to.equal(seller.address);
+    });
   });
 
   describe("ERC721 Receiver Guard", function () {
@@ -376,6 +400,27 @@ describe("DepositMarketplace", function () {
       );
     });
 
+    it("rejects recovery when the marketplace does not hold the NFT", async function () {
+      const { seller, marketplace, openDeposit } = await deployMarketplaceFixture();
+      const depositId = await openDeposit();
+
+      await expectCustomError(
+        marketplace.recoverUnlistedDeposit.staticCall(depositId, seller.address),
+        marketplace.interface,
+        "NotEscrowed",
+      );
+    });
+
+    it("rejects ERC721 receiver calls from non-SavingCore senders", async function () {
+      const { seller, marketplace } = await deployMarketplaceFixture();
+
+      await expectCustomError(
+        marketplace.onERC721Received.staticCall(seller.address, seller.address, 0, "0x"),
+        marketplace.interface,
+        "InvalidNFT",
+      );
+    });
+
     it("rejects auto-renewal minting into marketplace escrow if cleanup fails", async function () {
       const { seller, bot, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
       const depositId = await openDeposit();
@@ -412,6 +457,13 @@ describe("DepositMarketplace", function () {
       await expectCustomError(marketplace.connect(buyer).buyDeposit.staticCall(depositId), marketplace.interface, "EnforcedPause");
       await marketplace.connect(seller).cancelListing(depositId);
       expect(await savingCore.ownerOf(depositId)).to.equal(seller.address);
+    });
+
+    it("restricts pause controls to the owner", async function () {
+      const { seller, marketplace } = await deployMarketplaceFixture();
+
+      await expectCustomError(marketplace.connect(seller).pause.staticCall(), marketplace.interface, "OwnableUnauthorizedAccount");
+      await expectCustomError(marketplace.connect(seller).unpause.staticCall(), marketplace.interface, "OwnableUnauthorizedAccount");
     });
   });
 });

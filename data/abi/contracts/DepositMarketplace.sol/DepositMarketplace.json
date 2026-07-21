@@ -114,11 +114,6 @@
     },
     {
         "inputs": [],
-        "name": "ReentrancyGuardReentrantCall",
-        "type": "error"
-    },
-    {
-        "inputs": [],
         "name": "RenewalMintRejected",
         "type": "error"
     },
