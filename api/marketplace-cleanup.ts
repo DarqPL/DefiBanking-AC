@@ -4,7 +4,10 @@ const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 const DEFAULT_MAX_LISTINGS = 50n;
 
 const MARKETPLACE_ABI = [
-  "function cleanExpiredListings(uint256 maxListings) external returns (uint256 cleaned)",
+  "function cleanListings(uint256[] depositIds) external returns (uint256 cleaned)",
+  "function isListingStale(uint256 depositId) external view returns (bool)",
+  "function listedCount() external view returns (uint256)",
+  "function listedDepositIds(uint256 index) external view returns (uint256)",
 ];
 
 type VercelRequest = {
@@ -92,21 +95,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const dryRun = firstValue(req.query.dryRun) === "1";
 
-  if (dryRun) {
-    const cleaned = await marketplace.cleanExpiredListings.staticCall(maxListings);
+  const listedCount = (await marketplace.listedCount()) as bigint;
+  const staleDepositIds: bigint[] = [];
 
+  for (let index = 0n; index < listedCount; index += 1n) {
+    const depositId = (await marketplace.listedDepositIds(index)) as bigint;
+    if ((await marketplace.isListingStale(depositId)) as boolean) {
+      staleDepositIds.push(depositId);
+    }
+  }
+
+  const cleanupDepositIds = staleDepositIds.slice(0, Number(maxListings));
+
+  if (dryRun) {
     return res.status(200).json({
       mode: "dry-run",
       network: "sepolia",
       marketplace: marketplaceAddress,
       bot: wallet.address,
       latestBlockTimestamp: latestBlock.timestamp,
+      listedCount: listedCount.toString(),
       maxListings: maxListings.toString(),
-      cleaned: cleaned.toString(),
+      staleCount: staleDepositIds.length.toString(),
+      cleanupCount: cleanupDepositIds.length.toString(),
+      staleDepositIds: staleDepositIds.map((depositId) => depositId.toString()),
+      cleanupDepositIds: cleanupDepositIds.map((depositId) => depositId.toString()),
     });
   }
 
-  const tx = await marketplace.cleanExpiredListings(maxListings);
+  if (cleanupDepositIds.length === 0) {
+    return res.status(200).json({
+      mode: "skip",
+      network: "sepolia",
+      marketplace: marketplaceAddress,
+      bot: wallet.address,
+      latestBlockTimestamp: latestBlock.timestamp,
+      listedCount: listedCount.toString(),
+      maxListings: maxListings.toString(),
+      staleCount: staleDepositIds.length.toString(),
+      reason: "no stale listings",
+    });
+  }
+
+  const cleaned = await marketplace.cleanListings.staticCall(cleanupDepositIds);
+  const tx = await marketplace.cleanListings(cleanupDepositIds);
   const receipt = await tx.wait();
 
   return res.status(200).json({
@@ -115,7 +147,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     marketplace: marketplaceAddress,
     bot: wallet.address,
     latestBlockTimestamp: latestBlock.timestamp,
+    listedCount: listedCount.toString(),
     maxListings: maxListings.toString(),
+    staleCount: staleDepositIds.length.toString(),
+    cleanupCount: cleanupDepositIds.length.toString(),
+    cleaned: cleaned.toString(),
+    cleanupDepositIds: cleanupDepositIds.map((depositId) => depositId.toString()),
     txHash: receipt?.hash ?? tx.hash,
   });
 }

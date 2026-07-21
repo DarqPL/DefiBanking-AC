@@ -53,7 +53,7 @@ Student ID ending used for this project: `71`.
 - Lets sellers list active, listable deposit NFTs for a fixed MockUSDC price.
 - Lets buyers purchase listings and receive the deposit NFT plus all future deposit-owner rights.
 - Lets sellers cancel listings before purchase.
-- Provides `cleanExpiredListings(uint256 maxListings)` for scheduled cleanup when listed deposits enter the no-listing window.
+- Provides targeted scheduled cleanup with `isListingStale(uint256 depositId)` and `cleanListings(uint256[] depositIds)` so cron only sends a transaction when stale listings exist.
 - Requires users to accept the current marketplace terms hash when listing.
 
 ## Sepolia Addresses
@@ -64,8 +64,8 @@ The frontend currently points to these Sepolia deployments:
 | --- | --- |
 | `MockUSDC` | `0x3Cb2AE0859d0B2aFe20d5f16Bf9e2E35A1cb2Cb8` |
 | `VaultManager` | `0x8b7FbAca6606610BD953EE65e77911d69573BC81` |
-| `SavingCore` | `0xF2e14533C7920bBE40bB86F16B0F268229382FA5` |
-| `DepositMarketplace` | `0x9Ae860C2DCc66f80f5ad69E451c3208cd77924a0` |
+| `SavingCore` | `0x74E9BB5E8B755F0714c1AfF8f8A4672E5471C4Cb` |
+| `DepositMarketplace` | `0xDB65a61f66400a5F9E5eB0cB78E08933c109ca5a` |
 
 Local deployments generate new addresses. Update `frontend/src/config.ts` if using a different deployment.
 
@@ -149,7 +149,7 @@ Buyer flow:
 3. Marketplace pays the seller and transfers the NFT to the buyer.
 4. Buyer becomes the deposit NFT owner and controls future withdrawal, renewal, transfer, or early-withdrawal rights.
 
-Listings too close to maturity are blocked by the marketplace no-listing window. Existing listings that later enter the restricted window can be cleaned up by calling `cleanExpiredListings(uint256 maxListings)`, returning NFTs to sellers.
+Listings too close to maturity are blocked by the marketplace no-listing window. Existing listings that later enter the restricted window can be cleaned up by calling `cleanListings(uint256[] depositIds)`, returning NFTs to sellers. The older `cleanExpiredListings(uint256 maxListings)` cursor cleanup remains available as a permissionless fallback.
 
 ## Admin Flows
 
@@ -297,7 +297,7 @@ This project includes:
 - `.github/workflows/auto-renew-bot.yml`: scheduled GitHub Actions fallback.
 - `docs/AUTO_RENEW_BOT_SETUP.md`: setup notes for Vercel and cron-job.org.
 
-The marketplace cleanup endpoint is `api/marketplace-cleanup.ts`. It calls `DepositMarketplace.cleanExpiredListings(maxListings)` from a bot wallet and is intended to be triggered by cron-job.org or another scheduler.
+The marketplace cleanup endpoint is `api/marketplace-cleanup.ts`. It scans all current listing IDs off-chain with `isListingStale(depositId)`. If no stale listing exists, it returns `mode: "skip"` and sends no transaction. If stale listings exist, it calls `DepositMarketplace.cleanListings(staleDepositIds)` from a bot wallet. It is intended to be triggered by cron-job.org or another scheduler.
 
 The Vercel endpoint should be called periodically with a `CRON_SECRET`. It scans active deposits and calls `autoRenewDeposit` for deposits that reached `maturityAt + 3 days`.
 
@@ -312,9 +312,9 @@ npm run bot:auto-renew:sepolia
 Latest recorded contract verification:
 
 - `npm.cmd run compile`: passed.
-- `npm.cmd test`: passed with `63 passing`.
+- `npm.cmd test`: passed with `65 passing`.
 - `npx.cmd hardhat coverage`: passed.
-- Coverage: `100%` statements, `95.63%` branches, `100%` functions, `100%` lines.
+- Coverage: `100%` statements, `95.67%` branches, `100%` functions, `100%` lines.
 
 Latest recorded frontend verification:
 

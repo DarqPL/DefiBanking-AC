@@ -122,6 +122,8 @@ Add a permissionless cleanup function to `DepositMarketplace`:
 
 ```solidity
 function cleanExpiredListings(uint256 maxListings) external returns (uint256 cleaned);
+function isListingStale(uint256 depositId) external view returns (bool);
+function cleanListings(uint256[] calldata depositIds) external returns (uint256 cleaned);
 ```
 
 Expected behavior:
@@ -131,6 +133,8 @@ Expected behavior:
 - Return the escrowed NFT to the original seller wallet.
 - Emit `ListingExpired(depositId, seller)` or a similar event.
 - Continue scanning even when some listings are not expired.
+
+`cleanExpiredListings` remains available as a permissionless fallback. The Vercel cron endpoint uses the targeted flow: scan all listed IDs off-chain with `isListingStale`, return `mode: "skip"` when no stale listing exists, and send `cleanListings(staleDepositIds)` only when there is cleanup work.
 
 The function must be safe for anyone to call. The project bot, frontend, a third-party keeper, or cron-job.org can trigger it.
 
@@ -163,7 +167,7 @@ Manual dry-run URL:
 https://<your-project-name>.vercel.app/api/marketplace-cleanup?secret=<CRON_SECRET>&dryRun=1
 ```
 
-The dry run calls `cleanExpiredListings.staticCall(maxListings)` and reports how many listings would be cleaned without sending a transaction.
+The dry run scans current listing IDs with `isListingStale` and reports stale IDs without sending a transaction.
 
 ## Frontend Updates
 
@@ -228,7 +232,8 @@ Completed contract work:
 - The marketplace verifies the official `SavingCore` NFT, active deposit status, seller ownership, terms hash, and the no-listing window before accepting listings.
 - The marketplace blocks self-buying; sellers should cancel listings instead.
 - The marketplace returns expired/stale listings to sellers through permissionless cleanup.
-- The marketplace implements `cleanExpiredListings(uint256 maxListings)` for the Vercel cron API.
+- The marketplace implements targeted cleanup with `isListingStale(uint256 depositId)` and `cleanListings(uint256[] depositIds)` for the Vercel cron API.
+- `cleanExpiredListings(uint256 maxListings)` remains available as a permissionless cursor fallback.
 - The marketplace rejects direct `safeTransferFrom` deposits and rejects `_safeMint` renewal mints from `SavingCore` while escrowed.
 - The marketplace owner can recover an unlisted NFT sent by raw ERC721 `transferFrom`.
 
@@ -263,17 +268,17 @@ After Sepolia deployment:
 Latest verification:
 
 - `npm.cmd run compile`: passed.
-- `npm.cmd test`: passed with `63 passing`.
+- `npm.cmd test`: passed with `65 passing`.
 - `npx.cmd hardhat coverage`: passed with every contract above 90% coverage.
 
 Latest coverage:
 
 ```text
-DepositMarketplace.sol | 100 stmts | 96.15 branch | 100 funcs | 100 lines
+DepositMarketplace.sol | 100 stmts | 96.25 branch | 100 funcs | 100 lines
 MockUSDC.sol           | 100 stmts | 100 branch   | 100 funcs | 100 lines
 SavingCore.sol         | 100 stmts | 95.35 branch | 100 funcs | 100 lines
 VaultManager.sol       | 100 stmts | 95.24 branch | 100 funcs | 100 lines
-All files              | 100 stmts | 95.63 branch | 100 funcs | 100 lines
+All files              | 100 stmts | 95.67 branch | 100 funcs | 100 lines
 ```
 
 ## Frontend Implementation
@@ -292,6 +297,9 @@ User dashboard behavior:
 Marketplace page behavior:
 
 - `Active Listings` shows public listings from `listedCount`, `listedDepositIds`, `listings`, and `SavingCore.deposits`.
+- Active marketplace listings are paginated newest-first so the frontend does not load every listing at once when the marketplace grows.
+- Seller listings are loaded from indexed `Listed` events for the connected seller, then validated against current `listings` state so cancellation remains available even when a seller listing is not on the current public page.
+- The cleanup API scans all listed IDs off-chain and only submits a gas transaction when at least one stale listing exists.
 - Buyers can purchase listings through `buyDeposit`; the UI checks and submits USDC approval first when needed.
 - `My Listable Deposit NFTs` shows active, currently owned deposits that pass `DepositMarketplace.isListable`.
 - Sellers must enter a USDC price and explicitly accept Marketplace Terms v1 before listing.
@@ -316,7 +324,7 @@ Listings may be cancelled by the seller before purchase. Listings that enter the
 All listing, purchase, cancellation, cleanup, ownership, withdrawal, renewal, and transfer outcomes are determined by the deployed smart contracts. This interface is informational and does not override on-chain contract behavior.
 ```
 
-README updates are intentionally deferred until final review of the frontend is complete.
+README has been updated with the Phase 16 transferable-certificate marketplace answer and targeted cleanup behavior.
 
 ## Security Notes
 

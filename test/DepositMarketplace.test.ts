@@ -355,6 +355,48 @@ describe("DepositMarketplace", function () {
       await marketplace.connect(seller).cancelListing(depositId);
       expect(await savingCore.ownerOf(depositId)).to.equal(seller.address);
     });
+
+    it("cleans exact stale listing ids and skips valid listings", async function () {
+      const { seller, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
+      const staleDepositId = await openDeposit();
+      await savingCore.createPlan(1_000, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      const validDepositId = await openDeposit(1n);
+      await listDeposit(staleDepositId);
+      await listDeposit(validDepositId);
+
+      expect(await marketplace.isListingStale(staleDepositId)).to.equal(false);
+      expect(await marketplace.isListingStale(validDepositId)).to.equal(false);
+
+      const staleDeposit = await savingCore.deposits(staleDepositId);
+      await time.increaseTo(Number(staleDeposit.maturityAt - 10n * day));
+
+      expect(await marketplace.isListingStale(staleDepositId)).to.equal(true);
+      expect(await marketplace.isListingStale(validDepositId)).to.equal(false);
+      expect(await marketplace.cleanListings.staticCall([staleDepositId, validDepositId])).to.equal(1n);
+
+      await marketplace.cleanListings([staleDepositId, validDepositId]);
+
+      expect(await savingCore.ownerOf(staleDepositId)).to.equal(seller.address);
+      expect(await savingCore.ownerOf(validDepositId)).to.equal(marketplaceAddress);
+      expect(await marketplace.listedCount()).to.equal(1n);
+      expect(await marketplace.isListingStale(staleDepositId)).to.equal(false);
+      expect(await savingCore.balanceOf(marketplaceAddress)).to.equal(1n);
+    });
+
+    it("targeted cleanup skips unlisted and still-valid ids without moving the cursor", async function () {
+      const { seller, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
+      const listedDepositId = await openDeposit();
+      const unlistedDepositId = await openDeposit();
+      await listDeposit(listedDepositId);
+
+      expect(await marketplace.cleanListings.staticCall([listedDepositId, unlistedDepositId, 999n])).to.equal(0n);
+      await marketplace.cleanListings([listedDepositId, unlistedDepositId, 999n]);
+
+      expect(await marketplace.cleanupCursor()).to.equal(0n);
+      expect(await marketplace.listedCount()).to.equal(1n);
+      expect(await savingCore.ownerOf(listedDepositId)).to.equal(marketplaceAddress);
+      expect(await savingCore.ownerOf(unlistedDepositId)).to.equal(seller.address);
+    });
   });
 
   describe("ERC721 Receiver Guard", function () {

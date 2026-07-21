@@ -25,6 +25,8 @@ type MarketplaceListing = {
 
 const DEPLOYMENT_BLOCK = 11_313_284;
 const CHUNK_SIZE = 10_000;
+const LISTINGS_PAGE_SIZE = 12;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 function formatUsdc(value: bigint) {
   return `${ethers.formatUnits(value, 6)} USDC`;
@@ -290,10 +292,53 @@ function TermsPanel({ currentTermsHash }: { currentTermsHash: string }) {
   );
 }
 
+function PaginationControls({
+  currentPage,
+  totalPages,
+  totalListings,
+  isBusy,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalListings: number;
+  isBusy: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalListings === 0) return null;
+
+  return (
+    <div className="pagination-row">
+      <button
+        className="secondary-button compact-button"
+        type="button"
+        onClick={() => onPageChange(currentPage - 1)}
+        disabled={isBusy || currentPage === 0}
+      >
+        Previous
+      </button>
+      <span>
+        Page {currentPage + 1} of {totalPages} · {totalListings} listings
+      </span>
+      <button
+        className="secondary-button compact-button"
+        type="button"
+        onClick={() => onPageChange(currentPage + 1)}
+        disabled={isBusy || currentPage >= totalPages - 1}
+      >
+        Next
+      </button>
+    </div>
+  );
+}
+
 export default function Marketplace() {
   const { account, provider, contracts } = useWeb3();
   const { mockUSDC, savingCore, depositMarketplace } = contracts;
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
+  const [myListings, setMyListings] = useState<MarketplaceListing[]>([]);
+  const [listingPage, setListingPage] = useState(0);
+  const [totalListingCount, setTotalListingCount] = useState(0);
   const [listableDeposits, setListableDeposits] = useState<DepositInfo[]>([]);
   const [currentTermsHash, setCurrentTermsHash] = useState("");
   const [pricesByDeposit, setPricesByDeposit] = useState<Record<string, string>>({});
@@ -305,8 +350,8 @@ export default function Marketplace() {
   const [errorMessage, setErrorMessage] = useState("");
 
   const isBusy = isLoading || txStatus.length > 0;
-  const myListings = listings.filter((listing) => isSameAddress(listing.seller, account));
   const publicListings = listings.filter((listing) => !isSameAddress(listing.seller, account));
+  const totalListingPages = Math.max(1, Math.ceil(totalListingCount / LISTINGS_PAGE_SIZE));
 
   const parseError = useCallback((error: unknown) => {
     return parseTransactionError(error, savingCore, null, mockUSDC, depositMarketplace);
@@ -328,24 +373,54 @@ export default function Marketplace() {
       setCurrentTermsHash(termsHash);
       if (latestBlock) setNow(BigInt(latestBlock.timestamp));
 
+      const totalCount = Number(listedCount);
+      const maxPage = Math.max(0, Math.ceil(totalCount / LISTINGS_PAGE_SIZE) - 1);
+      const pageForFetch = Math.min(listingPage, maxPage);
+      if (pageForFetch !== listingPage) setListingPage(pageForFetch);
+      setTotalListingCount(totalCount);
+
       const fetchedListings: MarketplaceListing[] = [];
-      for (let index = 0n; index < listedCount; index += 1n) {
+      const startIndex = totalCount - 1 - pageForFetch * LISTINGS_PAGE_SIZE;
+      const endIndex = Math.max(-1, startIndex - LISTINGS_PAGE_SIZE);
+
+      for (let index = startIndex; index > endIndex; index -= 1) {
         const depositId = (await depositMarketplace.listedDepositIds(index)) as bigint;
         const listing = await depositMarketplace.listings(depositId);
         const deposit = normalizeDeposit(depositId, await savingCore.deposits(depositId));
         fetchedListings.push(normalizeListing(depositId, listing, deposit));
       }
-      setListings(fetchedListings.sort((left, right) => Number(right.depositId - left.depositId)));
+      setListings(fetchedListings);
 
       if (!account || !provider) {
         setListableDeposits([]);
+        setMyListings([]);
         return;
       }
 
-      const [openedEvents, transferInEvents] = await Promise.all([
+      const [openedEvents, transferInEvents, sellerListingEvents] = await Promise.all([
         queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider),
         queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider),
+        queryFilterInChunks(depositMarketplace, depositMarketplace.filters.Listed(null, account), provider),
       ]);
+
+      const sellerListingIds = new Set<string>();
+      for (const event of sellerListingEvents) {
+        if (!("args" in event) || !event.args) continue;
+        const depositId = (event.args as { depositId?: bigint }).depositId;
+        if (depositId !== undefined) sellerListingIds.add(depositId.toString());
+      }
+
+      const fetchedMyListings: MarketplaceListing[] = [];
+      for (const depositId of sellerListingIds) {
+        const listing = await depositMarketplace.listings(depositId);
+        const values = listing as { seller: string; price: bigint };
+        if (isSameAddress(values.seller, ZERO_ADDRESS)) continue;
+
+        const normalizedDepositId = BigInt(depositId);
+        const deposit = normalizeDeposit(normalizedDepositId, await savingCore.deposits(normalizedDepositId));
+        fetchedMyListings.push(normalizeListing(normalizedDepositId, listing, deposit));
+      }
+      setMyListings(fetchedMyListings.sort((left, right) => Number(right.depositId - left.depositId)));
 
       const candidateIds = new Set<string>();
       for (const event of [...openedEvents, ...transferInEvents]) {
@@ -378,7 +453,7 @@ export default function Marketplace() {
     } finally {
       setIsLoading(false);
     }
-  }, [account, depositMarketplace, parseError, provider, savingCore]);
+  }, [account, depositMarketplace, listingPage, parseError, provider, savingCore]);
 
   const runTransaction = useCallback(async (
     label: string,
@@ -503,7 +578,16 @@ export default function Marketplace() {
       <section className="section-panel">
         <div className="section-header">
           <p className="eyebrow">Active Listings</p>
-          <h2>Available deposit NFTs</h2>
+          <div className="section-title-row">
+            <h2>Available deposit NFTs</h2>
+            <PaginationControls
+              currentPage={listingPage}
+              totalPages={totalListingPages}
+              totalListings={totalListingCount}
+              isBusy={isBusy}
+              onPageChange={setListingPage}
+            />
+          </div>
         </div>
         <div className="card-grid">
           {publicListings.length === 0 ? (

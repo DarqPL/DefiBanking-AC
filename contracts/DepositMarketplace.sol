@@ -299,6 +299,35 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     }
 
     /**
+     * @notice Removes specific stale listings and returns escrowed NFTs to their sellers.
+     * @dev Skips unlisted or still-valid deposit ids so off-chain cleanup can submit candidate batches safely.
+     * @param depositIds Deposit NFT ids to check and clean.
+     * @return cleaned Number of stale listings removed.
+     */
+    function cleanListings(uint256[] calldata depositIds) external returns (uint256 cleaned) {
+        uint256 length = depositIds.length;
+        for (uint256 index; index < length;) {
+            uint256 depositId = depositIds[index];
+
+            if (listingIndexPlusOne[depositId] != 0 && _isStale(depositId)) {
+                Listing memory listing = listings[depositId];
+                _removeListing(depositId);
+
+                savingCore.safeTransferFrom(address(this), listing.seller, depositId);
+
+                emit ListingExpired(depositId, listing.seller);
+                unchecked {
+                    ++cleaned;
+                }
+            }
+
+            unchecked {
+                ++index;
+            }
+        }
+    }
+
+    /**
      * @notice Recovers an unlisted deposit NFT accidentally sent to the marketplace without safe listing flow.
      * @param depositId Deposit NFT id to recover.
      * @param recipient Account that should receive the NFT.
@@ -320,6 +349,14 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     function isListable(uint256 depositId) public view returns (bool) {
         (uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
         return status == ISavingCoreMarketplace.DepositStatus.Active && !_isRestricted(startAt, maturityAt);
+    }
+
+    /**
+     * @notice Returns whether a listed deposit should be removed by cleanup.
+     * @param depositId Deposit NFT id to check.
+     */
+    function isListingStale(uint256 depositId) external view returns (bool) {
+        return listingIndexPlusOne[depositId] != 0 && _isStale(depositId);
     }
 
     /**
