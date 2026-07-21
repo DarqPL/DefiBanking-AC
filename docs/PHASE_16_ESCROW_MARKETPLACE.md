@@ -217,6 +217,107 @@ Add `test/DepositMarketplace.test.ts` covering:
 7. Configure Vercel `MARKETPLACE_ADDRESS` and redeploy.
 8. Configure cron-job.org to call `/api/marketplace-cleanup` every 15 minutes.
 
+## Current Progress: Phase 16 Question 1
+
+Phase 16 Question 1 is implemented at the contract and deployment-script level.
+
+Completed contract work:
+
+- `SavingCore` now uses `_safeMint` for deposit NFTs, allowing marketplace escrow to reject renewal mints while preserving normal EOA minting.
+- `DepositMarketplace` was added as a separate escrow marketplace contract.
+- The marketplace verifies the official `SavingCore` NFT, active deposit status, seller ownership, terms hash, and the no-listing window before accepting listings.
+- The marketplace blocks self-buying; sellers should cancel listings instead.
+- The marketplace returns expired/stale listings to sellers through permissionless cleanup.
+- The marketplace implements `cleanExpiredListings(uint256 maxListings)` for the Vercel cron API.
+- The marketplace rejects direct `safeTransferFrom` deposits and rejects `_safeMint` renewal mints from `SavingCore` while escrowed.
+- The marketplace owner can recover an unlisted NFT sent by raw ERC721 `transferFrom`.
+
+Completed deployment work:
+
+- `deploy/04-deploy-deposit-marketplace.ts` deploys `DepositMarketplace` after `SavingCore`.
+- The deployment uses the committed `MockUSDC` and `SavingCore` deployment addresses from `hardhat-deploy`.
+- The initial marketplace terms hash is:
+
+```text
+0x3b66a5c015a29f4b433c579a09d7e3f9be033797349ca7d673571d722c5b8676
+```
+
+This is computed as:
+
+```text
+ethers.id("phase-16-marketplace-terms-v1")
+```
+
+Deployment command:
+
+```bash
+npx.cmd hardhat deploy --network sepolia
+```
+
+After Sepolia deployment:
+
+- Set Vercel `MARKETPLACE_ADDRESS` to the deployed `DepositMarketplace` address.
+- Update frontend config with the deployed marketplace address during the frontend marketplace phase.
+- Configure cron-job.org to call `/api/marketplace-cleanup` every 15 minutes.
+
+Latest verification:
+
+- `npm.cmd run compile`: passed.
+- `npm.cmd test`: passed with `63 passing`.
+- `npx.cmd hardhat coverage`: passed with every contract above 90% coverage.
+
+Latest coverage:
+
+```text
+DepositMarketplace.sol | 100 stmts | 96.15 branch | 100 funcs | 100 lines
+MockUSDC.sol           | 100 stmts | 100 branch   | 100 funcs | 100 lines
+SavingCore.sol         | 100 stmts | 95.35 branch | 100 funcs | 100 lines
+VaultManager.sol       | 100 stmts | 95.24 branch | 100 funcs | 100 lines
+All files              | 100 stmts | 95.63 branch | 100 funcs | 100 lines
+```
+
+## Frontend Implementation
+
+The frontend now includes a marketplace route at `/marketplace` and the user dashboard is ownership-aware.
+
+User dashboard behavior:
+
+- The active list is now `My Active Deposit NFTs`.
+- Active cards only show deposits where the connected wallet is the current ERC721 owner and the deposit status is active.
+- Deposit discovery includes both `DepositOpened` events and ERC721 `Transfer` events so purchased or received deposit NFTs appear for the recipient.
+- Deposits transferred or sold away no longer appear in the sender's active list.
+- Inactive, transferred, sold, or marketplace-escrowed deposits are shown in a collapsed history section opened by `View History`.
+- Mature but still-active NFTs remain in the active list because they are still actionable.
+
+Marketplace page behavior:
+
+- `Active Listings` shows public listings from `listedCount`, `listedDepositIds`, `listings`, and `SavingCore.deposits`.
+- Buyers can purchase listings through `buyDeposit`; the UI checks and submits USDC approval first when needed.
+- `My Listable Deposit NFTs` shows active, currently owned deposits that pass `DepositMarketplace.isListable`.
+- Sellers must enter a USDC price and explicitly accept Marketplace Terms v1 before listing.
+- The listing flow checks NFT approval and approves `DepositMarketplace` when needed before calling `listDeposit`.
+- `My Listings` shows escrowed listings where the connected wallet is the seller.
+- Sellers can call `cancelListing` to return the NFT from escrow.
+- Marketplace custom errors are parsed into user-facing messages.
+
+Marketplace Terms v1 shown in the UI:
+
+```text
+By listing a deposit NFT, the seller confirms that the NFT represents an active SavingCore deposit position and agrees to transfer that NFT into DepositMarketplace escrow.
+
+While the NFT is held in escrow, the seller will not control the deposit NFT and cannot withdraw, renew, early-withdraw, transfer, or otherwise exercise deposit-owner rights unless the listing is cancelled or cleaned up and the NFT is returned.
+
+If a buyer purchases the listing, the buyer receives the deposit NFT and becomes the holder of all future rights attached to that deposit position, including eligible maturity withdrawal, renewal, transfer, or early-withdrawal rights under the SavingCore contract.
+
+The seller receives the listed USDC sale price when a purchase transaction succeeds. The protocol does not guarantee that the sale price equals the deposit principal, accrued interest, fair market value, or expected maturity value.
+
+Listings may be cancelled by the seller before purchase. Listings that enter the no-listing window or otherwise become invalid may be cleaned up by anyone, returning the NFT to the seller.
+
+All listing, purchase, cancellation, cleanup, ownership, withdrawal, renewal, and transfer outcomes are determined by the deployed smart contracts. This interface is informational and does not override on-chain contract behavior.
+```
+
+README updates are intentionally deferred until final review of the frontend is complete.
+
 ## Security Notes
 
 - Use OpenZeppelin `IERC721Receiver` so escrow can receive safe ERC721 transfers.

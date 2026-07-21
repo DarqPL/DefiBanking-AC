@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from 'react-router-dom'
 import './App.css'
 import AdminDashboard from './pages/AdminDashboard'
+import Marketplace from './pages/Marketplace'
 import UserDashboard from './pages/UserDashboard'
 import { useWeb3 } from './useWeb3'
 
@@ -21,6 +22,7 @@ function App() {
         <div className="nav-actions">
           <div className="nav-links">
             <Link to="/">User Dashboard</Link>
+            <Link to="/marketplace">Marketplace</Link>
             <Link to="/admin">Admin Dashboard</Link>
           </div>
 
@@ -54,6 +56,7 @@ function App() {
         <main className="main-content">
           <Routes>
             <Route path="/" element={<UserDashboard />} />
+            <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/admin" element={<AdminDashboard />} />
           </Routes>
         </main>

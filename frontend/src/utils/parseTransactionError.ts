@@ -20,6 +20,17 @@ const ERROR_MESSAGES: Record<string, string> = {
   OwnableUnauthorizedAccount: 'Connected wallet is not authorized for this admin action.',
   InsufficientVaultBalance: 'The vault does not have enough USDC liquidity.',
   InvalidAddress: 'Invalid address provided.',
+  InvalidNFT: 'This is not the official deposit NFT.',
+  InvalidPrice: 'Listing price must be greater than zero.',
+  InvalidTerms: 'Marketplace terms changed. Refresh and accept the current terms.',
+  AlreadyListed: 'This deposit NFT is already listed.',
+  ListingNotFound: 'This listing no longer exists.',
+  NotSeller: 'Only the listing seller can perform this action.',
+  NotEscrowed: 'This deposit NFT is not held in marketplace escrow.',
+  RestrictedWindow: 'This deposit is too close to maturity to list.',
+  SelfBuyNotAllowed: 'You cannot buy your own listing. Cancel it instead.',
+  DirectTransferRejected: 'Use the listing action instead of transferring directly to the marketplace.',
+  RenewalMintRejected: 'Marketplace escrow cannot receive renewal mints.',
   ZeroAmount: 'Amount must be greater than zero.',
 }
 
@@ -76,11 +87,12 @@ export function parseTransactionError(
   savingCore: Contract | null,
   vaultManager: Contract | null,
   mockUSDC: Contract | null,
+  depositMarketplace: Contract | null = null,
 ) {
   const data = getErrorData(error)
   if (!data) return getFallbackMessage(error)
 
-  for (const contract of [mockUSDC, savingCore, vaultManager]) {
+  for (const contract of [mockUSDC, savingCore, vaultManager, depositMarketplace]) {
     if (!contract) continue
 
     try {

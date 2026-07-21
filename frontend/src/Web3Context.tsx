@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ethers } from 'ethers'
 import MockUSDCAbi from './abi/MockUSDC.json'
+import DepositMarketplaceAbi from './abi/DepositMarketplace.json'
 import SavingCoreAbi from './abi/SavingCore.json'
 import VaultManagerAbi from './abi/VaultManager.json'
 import { CONTRACT_ADDRESSES } from './config'
@@ -140,13 +141,14 @@ export function Web3Provider({ children }: { children: ReactNode }) {
   const contracts = useMemo<Contracts>(() => {
     const runner = signer ?? provider
     if (!runner) {
-      return { mockUSDC: null, vaultManager: null, savingCore: null }
+      return { mockUSDC: null, vaultManager: null, savingCore: null, depositMarketplace: null }
     }
 
     return {
       mockUSDC: new ethers.Contract(CONTRACT_ADDRESSES.MockUSDC, MockUSDCAbi, runner),
       vaultManager: new ethers.Contract(CONTRACT_ADDRESSES.VaultManager, VaultManagerAbi, runner),
       savingCore: new ethers.Contract(CONTRACT_ADDRESSES.SavingCore, SavingCoreAbi, runner),
+      depositMarketplace: new ethers.Contract(CONTRACT_ADDRESSES.DepositMarketplace, DepositMarketplaceAbi, runner),
     }
   }, [provider, signer])
 

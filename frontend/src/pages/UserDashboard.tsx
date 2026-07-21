@@ -23,6 +23,8 @@ type DepositInfo = {
   aprBpsAtOpen: bigint;
   penaltyBpsAtOpen: bigint;
   status: bigint;
+  owner: string | null;
+  historyNote?: string;
 };
 
 const DEPOSIT_STATUS: Record<string, string> = {
@@ -99,7 +101,29 @@ function normalizeDeposit(id: bigint, deposit: unknown): DepositInfo {
     aprBpsAtOpen: values.aprBpsAtOpen,
     penaltyBpsAtOpen: values.penaltyBpsAtOpen,
     status: values.status,
+    owner: null,
   };
+}
+
+function isSameAddress(left: string | null | undefined, right: string | null | undefined) {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+async function queryFilterInChunks(
+  contract: ethers.Contract,
+  filter: ethers.DeferredTopicFilter,
+  provider: ethers.BrowserProvider,
+) {
+  const latestBlockNumber = await provider.getBlockNumber();
+  const events = [];
+
+  for (let fromBlock = DEPLOYMENT_BLOCK; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
+    const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber);
+    const chunk = await contract.queryFilter(filter, fromBlock, toBlock);
+    events.push(...chunk);
+  }
+
+  return events;
 }
 
 function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: bigint) => void }) {
@@ -192,6 +216,7 @@ function DepositCard({
   onEarlyWithdraw,
   onWithdraw,
   onRenew,
+  canManage = true,
 }: {
   deposit: DepositInfo;
   plans: SavingPlan[];
@@ -202,6 +227,7 @@ function DepositCard({
   onEarlyWithdraw: (depositId: bigint) => void;
   onWithdraw: (depositId: bigint) => void;
   onRenew: (depositId: bigint) => void;
+  canManage?: boolean;
 }) {
   const isActive = deposit.status === 1n;
   const isMatured = now >= deposit.maturityAt;
@@ -236,9 +262,15 @@ function DepositCard({
           <dt>Penalty Snapshot</dt>
           <dd>{formatApr(deposit.penaltyBpsAtOpen)}</dd>
         </div>
+        {deposit.historyNote && (
+          <div>
+            <dt>History</dt>
+            <dd>{deposit.historyNote}</dd>
+          </div>
+        )}
       </dl>
 
-      {isActive && (
+      {canManage && isActive && (
         <div className="action-row">
           {!isMatured ? (
             <>
@@ -291,7 +323,9 @@ export default function UserDashboard() {
   const { account, provider, contracts } = useWeb3();
   const { mockUSDC, savingCore } = contracts;
   const [plans, setPlans] = useState<SavingPlan[]>([]);
-  const [deposits, setDeposits] = useState<DepositInfo[]>([]);
+  const [activeDeposits, setActiveDeposits] = useState<DepositInfo[]>([]);
+  const [historyDeposits, setHistoryDeposits] = useState<DepositInfo[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [depositAmountInput, setDepositAmountInput] = useState("");
   const [renewPlanByDeposit, setRenewPlanByDeposit] = useState<Record<string, string>>({});
@@ -331,34 +365,68 @@ export default function UserDashboard() {
       }
 
       if (!account) {
-        setDeposits([]);
+        setActiveDeposits([]);
+        setHistoryDeposits([]);
         return;
       }
 
       if (!provider) {
-        setDeposits([]);
+        setActiveDeposits([]);
+        setHistoryDeposits([]);
         return;
       }
 
-      const filter = savingCore.filters.DepositOpened(null, account);
-      const latestBlockNumber = await provider.getBlockNumber();
-      const events = [];
+      const [openedEvents, transferInEvents, transferOutEvents] = await Promise.all([
+        queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.Transfer(account, null, null), provider),
+      ]);
 
-      for (let fromBlock = DEPLOYMENT_BLOCK; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
-        const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber);
-        const chunk = await savingCore.queryFilter(filter, fromBlock, toBlock);
-        events.push(...chunk);
+      const candidateIds = new Set<string>();
+
+      for (const event of [...openedEvents, ...transferInEvents, ...transferOutEvents]) {
+        if (!("args" in event) || !event.args) continue;
+        const args = event.args as { depositId?: bigint; tokenId?: bigint };
+        const depositId = args.depositId ?? args.tokenId;
+        if (depositId !== undefined) candidateIds.add(depositId.toString());
       }
 
       const fetchedDeposits = await Promise.all(
-        events.map(async (event) => {
-          if (!("args" in event) || !event.args) return null;
-          const depositId = (event.args as { depositId: bigint }).depositId;
-          return normalizeDeposit(depositId, await savingCore.deposits(depositId));
+        [...candidateIds].map(async (depositId) => {
+          const deposit = normalizeDeposit(BigInt(depositId), await savingCore.deposits(depositId));
+
+          try {
+            deposit.owner = ethers.getAddress((await savingCore.ownerOf(deposit.id)) as string);
+          } catch {
+            deposit.owner = null;
+          }
+
+          return deposit;
         })
       );
 
-      setDeposits(fetchedDeposits.filter((deposit): deposit is DepositInfo => Boolean(deposit)));
+      const nextActiveDeposits: DepositInfo[] = [];
+      const nextHistoryDeposits: DepositInfo[] = [];
+
+      for (const deposit of fetchedDeposits) {
+        if (deposit.status === 1n && isSameAddress(deposit.owner, account)) {
+          nextActiveDeposits.push(deposit);
+          continue;
+        }
+
+        if (deposit.status === 1n && isSameAddress(deposit.owner, CONTRACT_ADDRESSES.DepositMarketplace)) {
+          deposit.historyNote = "Listed in marketplace escrow";
+        } else if (deposit.status === 1n && deposit.owner) {
+          deposit.historyNote = "Transferred or sold to another wallet";
+        } else {
+          deposit.historyNote = DEPOSIT_STATUS[deposit.status.toString()] ?? "Inactive";
+        }
+
+        nextHistoryDeposits.push(deposit);
+      }
+
+      setActiveDeposits(nextActiveDeposits.sort((left, right) => Number(right.id - left.id)));
+      setHistoryDeposits(nextHistoryDeposits.sort((left, right) => Number(right.id - left.id)));
     } catch (error) {
       setErrorMessage(parseError(error));
     } finally {
@@ -486,14 +554,19 @@ export default function UserDashboard() {
 
       <section className="section-panel">
         <div className="section-header">
-          <p className="eyebrow">My Deposits</p>
-          <h2>Position history</h2>
+          <p className="eyebrow">My Active Deposit NFTs</p>
+          <div className="section-title-row">
+            <h2>Current positions</h2>
+            <button className="secondary-button compact-button" type="button" onClick={() => setShowHistory((current) => !current)}>
+              {showHistory ? "Hide History" : "View History"}
+            </button>
+          </div>
         </div>
         <div className="card-grid">
-          {deposits.length === 0 ? (
-            <p>No deposits found for this wallet.</p>
+          {activeDeposits.length === 0 ? (
+            <p>No active deposit NFTs found for this wallet.</p>
           ) : (
-            deposits.map((deposit) => (
+            activeDeposits.map((deposit) => (
               <DepositCard
                 key={deposit.id.toString()}
                 deposit={deposit}
@@ -520,6 +593,36 @@ export default function UserDashboard() {
           )}
         </div>
       </section>
+
+      {showHistory && (
+        <section className="section-panel">
+          <div className="section-header">
+            <p className="eyebrow">History</p>
+            <h2>Inactive and transferred NFTs</h2>
+          </div>
+          <div className="card-grid">
+            {historyDeposits.length === 0 ? (
+              <p>No history found for this wallet.</p>
+            ) : (
+              historyDeposits.map((deposit) => (
+                <DepositCard
+                  key={deposit.id.toString()}
+                  deposit={deposit}
+                  plans={activePlans}
+                  now={now}
+                  isBusy={isTxBusy}
+                  renewPlanId={renewPlanByDeposit[deposit.id.toString()] ?? activePlans[0]?.id.toString() ?? ""}
+                  onRenewPlanChange={handleRenewPlanChange}
+                  onEarlyWithdraw={() => undefined}
+                  onWithdraw={() => undefined}
+                  onRenew={() => undefined}
+                  canManage={false}
+                />
+              ))
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

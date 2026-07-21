@@ -5,6 +5,7 @@ export type Contracts = {
   mockUSDC: ethers.Contract | null
   vaultManager: ethers.Contract | null
   savingCore: ethers.Contract | null
+  depositMarketplace: ethers.Contract | null
 }
 
 export type Web3ContextValue = {
