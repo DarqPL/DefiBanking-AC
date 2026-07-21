@@ -53,6 +53,11 @@ function formatDate(timestamp: bigint) {
   return new Date(Number(timestamp) * 1000).toLocaleString();
 }
 
+function calculateInterest(deposit: DepositInfo) {
+  const tenorSeconds = deposit.maturityAt - deposit.startAt;
+  return (deposit.principal * deposit.aprBpsAtOpen * tenorSeconds) / (365n * 24n * 60n * 60n * 10_000n);
+}
+
 function normalizePlan(id: bigint, plan: unknown): SavingPlan {
   const values = plan as {
     minDeposit: bigint;
@@ -200,6 +205,7 @@ function DepositCard({
 }) {
   const isActive = deposit.status === 1n;
   const isMatured = now >= deposit.maturityAt;
+  const maturityInterest = calculateInterest(deposit);
   const earlyPenalty = (deposit.principal * deposit.penaltyBpsAtOpen) / 10_000n;
   const earlyReceiveAmount = deposit.principal - earlyPenalty;
 
@@ -217,6 +223,10 @@ function DepositCard({
         <div>
           <dt>APR Snapshot</dt>
           <dd>{formatApr(deposit.aprBpsAtOpen)}</dd>
+        </div>
+        <div>
+          <dt>Estimated Interest</dt>
+          <dd>{formatUsdc(maturityInterest)}</dd>
         </div>
         <div>
           <dt>Maturity</dt>

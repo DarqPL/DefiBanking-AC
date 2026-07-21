@@ -28,7 +28,7 @@ This file tracks which phases from `doc/PHASED_PROJECT_PLAN.md` have been comple
 | Phase 11: Security, Gas, and Code Quality Pass | Completed | Contracts use OpenZeppelin, `SafeERC20`, custom errors, events, NatSpec, status checks, and pass the full test suite. Gas data is emitted during `npm.cmd test`. |
 | Phase 12: Hardhat Test Suite and Coverage | Completed | `npm.cmd test` passes with `39 passing`; `npx.cmd hardhat coverage` reports `100%` statements, functions, and lines, with `92.97%` branch coverage. |
 | Phase 13: Deployment Scripts and Local Demo Data | Completed | Contracts were redeployed after spec-alignment fixes, frontend addresses were updated, and deploy scripts remain correct. |
-| Phase 14: Frontend Demo Implementation | Partially Completed | React frontend exists, accepts zero min/max values, displays zero limits as unlimited, and both `npm.cmd run lint` and `npm.cmd run build` pass. Manual MetaMask flow still needs final verification. |
+| Phase 14: Frontend Demo Implementation | Partially Completed | React frontend exists, accepts zero min/max values, displays zero limits as unlimited, shows estimated deposit interest, and both `npm.cmd run lint` and `npm.cmd run build` pass. MetaMask checks passed for wallet, network, plan viewing, approval, opening deposits, viewing deposits, and early withdrawal; maturity/renewal browser checks are impractical with the long tenor and remain covered by tests. |
 | Phase 15: Base README and Runbook | Not Started | Root `README.md` is still the sample Hardhat README and needs replacement. |
 | Phase 16: Deferred Section 8 Design and Improvement Pass | Deferred | Section 8 brainstorming and final structural improvements are intentionally postponed until after the base implementation is complete. |
 | Phase 17: Bonus Challenge Implementation, Optional | Deferred | No bonus challenge should be treated as selected until Phase 16 decisions are made. |
@@ -318,10 +318,26 @@ Verification after fixes:
 - `npm.cmd run build` from `frontend/`: passed.
 - Build warning remains non-blocking: Vite reports the main chunk is larger than `500 kB`.
 
+Frontend UI improvement after manual verification:
+
+- `frontend/src/pages/UserDashboard.tsx` now shows `Estimated Interest` for each deposit.
+- The displayed interest uses the same simple-interest formula as `SavingCore`: `principal * aprBpsAtOpen * tenorSeconds / (365 days * 10_000)`.
+- Verification after this UI change: `npm.cmd run lint` passed and `npm.cmd run build` passed.
+
+Manual MetaMask verification result:
+
+- Connect wallet: passed.
+- Wrong-network handling: passed; the app shows a modal and a button to switch back to Sepolia.
+- View plans: passed for both user and admin pages.
+- Approve MockUSDC: passed; one approval is enough, and the app asks for approval again when allowance is too low.
+- Open deposit: passed; the user can open a deposit and see the deposit details.
+- View deposit: passed; deposit details now include estimated interest.
+- Early withdrawal: passed; the fee goes to `feeReceiver`, and the user receives principal minus penalty.
+- Maturity withdrawal, manual renewal, and auto-renewal: not manually verified in the browser because the default term requires waiting until maturity. These flows remain covered by Hardhat tests with time travel.
+
 Frontend fixes still needed:
 
-- Manual MetaMask demo verification is still pending.
-- Verify wrong-network handling, wallet rejection handling, user flows, admin flows, and pending transaction states in the browser.
+- If required for the demo, use Hardhat tests or a permitted short-tenor local demo plan to show maturity withdrawal, manual renewal, and auto-renewal without waiting for the default term.
 
 Frontend demo suggestions:
 
@@ -468,9 +484,9 @@ How it was accomplished:
 
 Remaining follow-up:
 
-- Verify MetaMask connection, wrong-network handling, user rejection handling, and pending transaction states.
-- Verify user flows: view plans, open deposit, view active deposits, withdraw, and renew.
-- Verify admin flows if they are intended for the demo.
+- Verify user rejection handling and pending transaction states if time allows before the final demo.
+- Verify maturity withdrawal, manual renewal, and auto-renewal through tests or a permitted short-tenor local demo setup.
+- Verify any remaining admin flows intended for the demo.
 - Keep `npm.cmd run lint` passing if more frontend changes are made.
 
 ### README Baseline
