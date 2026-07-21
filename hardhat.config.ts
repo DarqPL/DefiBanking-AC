@@ -23,7 +23,12 @@ task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
   }
 });
 
-const { TESTNET_PRIVATE_KEY: testnetPrivateKey, MAINNET_PRIVATE_KEY: mainnetPrivateKey } = process.env;
+const {
+  TESTNET_PRIVATE_KEY: testnetPrivateKey,
+  MAINNET_PRIVATE_KEY: mainnetPrivateKey,
+  SEPOLIA_RPC_URL: sepoliaRpcUrl,
+  MAINNET_RPC_URL: mainnetRpcUrl,
+} = process.env;
 const reportGas = process.env.REPORT_GAS;
 
 // You need to export an object to set up your config
@@ -35,15 +40,15 @@ const reportGas = process.env.REPORT_GAS;
 module.exports = {
   networks: {
     sepolia: {
-      url: "https://ethereum-sepolia-rpc.publicnode.com",
+      url: sepoliaRpcUrl || "https://ethereum-sepolia-rpc.publicnode.com",
       chainId: 11155111,
-      accounts: [testnetPrivateKey],
+      accounts: testnetPrivateKey ? [testnetPrivateKey] : [],
       timeout: 40000,
     },
     ethereum: {
-      url: "https://ethereum-mainnet-rpc.publicnode.com",
+      url: mainnetRpcUrl || "https://ethereum-mainnet-rpc.publicnode.com",
       chainId: 1,
-      accounts: [mainnetPrivateKey],
+      accounts: mainnetPrivateKey ? [mainnetPrivateKey] : [],
       timeout: 60000,
     },
   },

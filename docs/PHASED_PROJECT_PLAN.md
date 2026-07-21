@@ -660,6 +660,7 @@ Make the contracts easy to deploy locally and to Sepolia, with predictable demo 
 - Verify `.env_example` lists required environment variables:
   - `TESTNET_PRIVATE_KEY`.
   - `MAINNET_PRIVATE_KEY`.
+  - `BOT_PRIVATE_KEY` for the auto-renew bot wallet.
   - `ETHERSCAN_API`.
   - `REPORT_GAS`.
 - Never commit real `.env` secrets.

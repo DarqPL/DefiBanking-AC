@@ -1,40 +1,42 @@
 # AGENTS.md
 
-## Repo State
-- Hardhat + TypeScript Solidity repo; `README.md` is the default sample and is less accurate than `package.json`/`hardhat.config.ts`.
-- Product target is a DeFi term-deposit banking system: users lock ERC20 tokens for a fixed period and withdraw principal plus interest after maturity.
-- Current worktree may have many tracked contract/test/deploy files deleted; do not restore or revert them unless explicitly asked.
-- Load `blockchain-developer` for contract/deploy work and `solidity-gas-optimization` for Solidity review, audit, or gas-focused changes.
-
-## Contract Expectations
-- Prioritize security and gas together: use checks-effects-interactions, custom errors, bounded iteration, cached storage reads, and packed structs where it stays readable.
-- Public/external Solidity functions should have NatSpec covering purpose, parameters, return values, and maturity/withdrawal edge cases.
-- For deposits/withdrawals, define behavior explicitly for early withdrawals, matured positions, zero amounts, insufficient contract liquidity, fee-on-transfer tokens, and repeated withdrawals.
-- Use OpenZeppelin contracts where appropriate; this repo already includes OZ v5.x, Hardhat, Ethers v6, and TypeChain.
-- If frontend code is added later, wire contract calls through generated TypeChain types and handle loading, pending txs, user rejection, wrong network, and network switching states.
+## Sources Of Truth
+- Root `README.md` and `frontend/README.md` are still template docs; prefer `package.json`, `hardhat.config.ts`, `deploy/`, `test/`, and `docs/`.
+- Assignment context lives under `docs/`; old tracked `doc/` files may be deleted in the worktree, so do not restore them unless asked.
+- Product is a DeFi term-deposit system: `SavingCore` holds user principal and deposit NFTs, `VaultManager` holds bank interest liquidity, `MockUSDC` is a 6-decimal test token.
+- Student variant currently documented as ID ending `71`: default tenor `180 days`, APR `225 bps`, early penalty `650 bps`, auto-renew grace `3 days`.
 
 ## Commands
-- `npm run compile` runs `hardhat compile`; compile also exports ABIs to `data/abi/`, runs contract sizer, and generates TypeChain in `typechain/`.
-- `npm test` runs all Hardhat mocha tests in `test/`; focused tests use `npx hardhat test test/Name.test.ts`.
-- `REPORT_GAS=1 npm test` enables `hardhat-gas-reporter` (PowerShell: `$env:REPORT_GAS="1"; npm test`).
-- `npm run size` runs contract sizer directly; `npm run clean` removes Hardhat artifacts/cache.
-- `npm run node` starts a local Hardhat node.
-- `npm run run:sepolia -- scripts/Name.ts` or `npx hardhat run --network sepolia scripts/Name.ts` runs Hardhat scripts.
-- `npm run run:ethereum -- scripts/Name.ts` targets mainnet; verify intent before using it.
-- `npx hardhat deploy --network <network>` runs `hardhat-deploy` scripts from `deploy/` when present.
+- Root install uses `package-lock.json`; frontend has its own `frontend/package-lock.json` and must be run from `frontend/`.
+- `npm run compile` runs Hardhat compile, ABI export to `data/abi/`, contract sizer, and TypeChain generation in `typechain/`.
+- `npm test` runs all Hardhat tests; focused tests use `npx hardhat test test/SavingCore.test.ts`.
+- `npx hardhat coverage` runs Solidity coverage; current docs record 39 passing and >90% coverage.
+- `REPORT_GAS=1 npm test` enables gas reporter; in PowerShell use `$env:REPORT_GAS="1"; npm test`.
+- If PowerShell blocks `npm.ps1`, use `npm.cmd run compile`, `npm.cmd test`, or `npx.cmd hardhat coverage`.
+- `npm run size`, `npm run clean`, and `npm run node` map directly to Hardhat size/clean/node.
+- Deploy scripts use `hardhat-deploy`: `npx hardhat deploy --network sepolia`; root scripts `npm run run:sepolia -- <script.ts>` and `npm run run:ethereum -- <script.ts>` run Hardhat runtime scripts. Verify intent before mainnet.
+- Frontend commands from `frontend/`: `npm run dev`, `npm run build` (`tsc -b && vite build`), `npm run lint`, `npm run preview`.
 
-## Config Facts
-- Solidity compiler is `0.8.28`, `evmVersion: "cancun"`, optimizer enabled with `runs: 1000`, and `viaIR: true`.
-- Networks are public RPCs: `sepolia` uses `TESTNET_PRIVATE_KEY`, `ethereum` uses `MAINNET_PRIVATE_KEY`; `.env_example` also defines `ETHERSCAN_API` and `REPORT_GAS`.
-- `dotenv.config()` is loaded from `hardhat.config.ts`; `.env` is gitignored.
-- `namedAccounts.deployer` is account index `0`; mocha timeout is `40000` ms.
-- TypeChain target is `ethers-v6`; import generated contract types from `../typechain` after compiling.
-- Only Prettier setting is `printWidth: 120` in `package.json`; there is no lint/typecheck/CI config in this repo.
+## Hardhat Config
+- Solidity config is compiler `0.8.28`, `evmVersion: "cancun"`, optimizer `runs: 1000`, `viaIR: true`; some contracts use compatible `^0.8.20` pragmas.
+- Ethers is v6, TypeChain target is `ethers-v6`, and tests use BigInt assertions such as `0n`.
+- `dotenv.config()` loads `.env`; `.env_example` defines `REPORT_GAS`, `TESTNET_PRIVATE_KEY`, `MAINNET_PRIVATE_KEY`, and `ETHERSCAN_API`. Never read or print real `.env` secrets.
+- Public RPC URLs are hard-coded for `sepolia` and `ethereum`; `namedAccounts.deployer` is account index `0`; mocha timeout is `40000` ms.
+- There is no root lint/typecheck script; only frontend has ESLint and a TypeScript build.
 
 ## Project Layout
-- `contracts/`: Solidity sources when present.
-- `deploy/`: `hardhat-deploy` scripts; committed examples use numbered filenames and `DeployFunction` with `func.tags = ["deploy"]`.
-- `test/`: Hardhat mocha/chai tests; committed examples deploy once in `before()` and use BigInt expectations like `0n`.
-- `scripts/`: Hardhat runtime scripts; committed examples use `ethers.getContract("Name")`, so deploy artifacts must exist.
-- `etherTest/`: standalone ethers scripts; committed examples use `import "dotenv/config"`, manual ABI arrays, and hard-coded deployed addresses.
-- `data/abi/`, `typechain/`, `artifacts/`, and `cache/` are generated; avoid hand-editing generated outputs.
+- `contracts/`: `MockUSDC`, `VaultManager`, `SavingCore`; public/external Solidity additions should keep existing NatSpec/custom-error style.
+- `deploy/`: numbered `hardhat-deploy` scripts; `03-deploy-saving-core.ts` wires `VaultManager.setSavingCore(...)` and creates the default plan if none exists.
+- `test/`: Hardhat mocha/chai tests deploy fixtures directly, use `@nomicfoundation/hardhat-network-helpers` time helpers, and include custom revert-data helpers for custom errors.
+- `frontend/`: standalone Vite React app on React 19, Ethers v6, MetaMask, Sepolia-only network switching, and hard-coded deployed addresses in `frontend/src/config.ts`.
+- `frontend/src/abi/` mirrors exported contract ABIs for the app; update these from compiled/exported ABIs instead of hand-editing when contracts change.
+- Generated or tool outputs include `artifacts/`, `cache/`, `typechain/`, `coverage/`, `coverage.json`, and `data/abi/`; avoid hand-editing them.
+- `deployments/sepolia/` contains committed hardhat-deploy artifacts for the current Sepolia deployment.
+
+## Contract Rules To Preserve
+- `MockUSDC` uses 6 decimals and intentionally allows any account to mint for tests/demo.
+- `SavingCore` treats zero `minDeposit` and zero `maxDeposit` as no limit, but still rejects zero deposit amount.
+- Interest uses simple APR math: `principal * aprBps * duration / (365 days * 10_000)`; interest is paid from `VaultManager`, never from other users' principal.
+- Early withdrawal pays no interest, sends penalty to `VaultManager.feeReceiver()`, and rejects after maturity.
+- Mature withdrawals and renewals burn/retire the old deposit NFT status so repeated withdrawal is rejected.
+- Load `blockchain-developer` for contract/deploy work and `solidity-gas-optimization` for Solidity reviews, audits, or gas-focused changes.

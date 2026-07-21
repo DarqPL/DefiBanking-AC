@@ -24,7 +24,7 @@ This file tracks which phases from `doc/PHASED_PROJECT_PLAN.md` have been comple
 | Phase 7: Maturity Withdrawal Flow | Completed | `withdrawAtMaturity` exists and is covered by passing tests for interest math, ownership, maturity timing, and invalid withdrawals. |
 | Phase 8: Early Withdrawal Flow | Completed | `earlyWithdraw` exists and is covered by passing tests for the `6.5%` penalty, fee receiver payout, zero/full penalty branches, and invalid withdrawals. |
 | Phase 9: Manual Renewal Flow | Completed | `renewDeposit` exists and is covered by passing tests for compounding, status update, invalid renewals, and zero-interest renewal behavior. |
-| Phase 10: Auto-Renewal Flow | Completed | `autoRenewDeposit` exists and is covered by passing tests for the student-specific `3-day` grace period, permissionless triggering, and APR preservation. |
+| Phase 10: Auto-Renewal Flow | Completed | `autoRenewDeposit` exists and is covered by passing tests for the student-specific `3-day` grace period, permissionless triggering, and APR preservation. A free GitHub Actions bot now triggers eligible Sepolia auto-renewals every 15 minutes. |
 | Phase 11: Security, Gas, and Code Quality Pass | Completed | Contracts use OpenZeppelin, `SafeERC20`, custom errors, events, NatSpec, status checks, and pass the full test suite. Gas data is emitted during `npm.cmd test`. |
 | Phase 12: Hardhat Test Suite and Coverage | Completed | `npm.cmd test` passes with `39 passing`; `npx.cmd hardhat coverage` reports `100%` statements, functions, and lines, with `92.97%` branch coverage. |
 | Phase 13: Deployment Scripts and Local Demo Data | Completed | Contracts were redeployed after spec-alignment fixes, frontend addresses were updated, and deploy scripts remain correct. |
@@ -38,6 +38,37 @@ This file tracks which phases from `doc/PHASED_PROJECT_PLAN.md` have been comple
 | Phase 21: Final Submission Checklist | Not Started | Final submission readiness has not been completed. |
 
 ## Completed Or Created Project Assets
+
+### Auto-Renew Bot Implementation
+
+Status: Completed
+
+Files added or updated:
+
+- `scripts/autoRenewBot.ts` scans deployed Sepolia deposits and calls `autoRenewDeposit` for active deposits whose grace period has ended.
+- `.github/workflows/auto-renew-bot.yml` runs the bot every 15 minutes and supports manual `workflow_dispatch` runs.
+- `package.json` adds `npm run bot:auto-renew:sepolia`.
+- `.env_example` documents optional RPC URL variables.
+- `hardhat.config.ts` supports optional `SEPOLIA_RPC_URL` and `MAINNET_RPC_URL`, and does not require private keys for local compile/test tasks.
+- `docs/AUTO_RENEW_BOT_SUGGESTION.md` records the selected bot design, setup requirements, dead-bot behavior, and APR rules.
+
+APR behavior confirmed:
+
+- Active deposits keep their `aprBpsAtOpen` snapshot if the admin later changes the plan APR.
+- Manual renew starts a new deposit using the selected plan's current APR.
+- Auto-renew starts a new deposit using the old deposit's original APR snapshot.
+
+Operational notes:
+
+- GitHub secret `BOT_PRIVATE_KEY` is required for the bot wallet.
+- GitHub secret `SEPOLIA_RPC_URL` is optional; the public Sepolia RPC is used if omitted.
+- The bot cannot renew at the exact second because GitHub Actions is scheduled and transactions must be mined. It renews as soon as practical after the grace period.
+
+Verification after bot implementation:
+
+- `npm.cmd run compile`: passed.
+- `$env:AUTO_RENEW_DRY_RUN="1"; npm.cmd run bot:auto-renew:sepolia; $env:AUTO_RENEW_DRY_RUN=$null`: passed, checked the Sepolia deployment without sending transactions, found `0` eligible deposits.
+- `npm.cmd test`: passed with `39 passing`.
 
 ## Verification Run: 2026-07-20
 

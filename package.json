@@ -10,6 +10,7 @@
     "size": "hardhat size-contracts",
     "clean": "hardhat clean",
     "run:sepolia": "hardhat run --network sepolia",
+    "bot:auto-renew:sepolia": "hardhat run scripts/autoRenewBot.ts --network sepolia",
     "run:ethereum": "hardhat run --network ethereum"
   },
   "license": "ISC",
