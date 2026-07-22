@@ -260,6 +260,22 @@ If a new contract is added, it must preserve these rules:
 - Handle race conditions where the frontend showed enough vault liquidity but another transaction used it first.
 - Explain that vault liquidity is checked on-chain at execution time.
 
+## Implemented Frontend Behavior
+
+The user dashboard follows the independent-claim model.
+
+- Active matured deposits use `previewMaturitySettlement(depositId)` to decide whether the vault can currently pay interest.
+- If the vault can pay, the maturity action is labeled `Withdraw Principal + Interest`.
+- If the vault cannot pay, the maturity action is labeled `Withdraw Principal Only` and a warning explains that unpaid interest will be recorded as a later claim.
+- After a maturity withdrawal confirms, the frontend inspects the transaction receipt. If the receipt includes `InterestDeferred`, it shows a notification that principal was paid and interest was deferred because the vault lacked funds.
+- Deferred claims are discovered from `InterestDeferred` and `InterestClaimed` events, then verified against `unpaidInterest(depositId)` and `interestClaimant(depositId)`.
+- The dashboard shows a separate `Deferred Interest Claims` section with one claim card per deposit.
+- Each deferred deposit has its own `Claim Interest` button that calls `claimInterest(depositId)`.
+- Claim buttons are disabled when `VaultManager.canPayInterest(unpaidInterest)` is false.
+- If a user has multiple deferred deposits, the user chooses which deposit to claim first. Claims are not batched in this phase.
+- After any claim attempt, the dashboard refreshes vault liquidity and all claim statuses because another transaction may have used the vault funds first.
+- Manual renewal is disabled per matured deposit when that deposit's interest cannot be paid and compounded.
+
 ## README Tasks
 
 - Update the Section 8.2 empty-vault answer to describe principal-safe withdrawal and independent unpaid claims.

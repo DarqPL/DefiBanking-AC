@@ -458,7 +458,7 @@
                 "type": "uint256"
             }
         ],
-        "name": "isListingStale",
+        "name": "isListable",
         "outputs": [
             {
                 "internalType": "bool",
@@ -477,7 +477,7 @@
                 "type": "uint256"
             }
         ],
-        "name": "isListable",
+        "name": "isListingStale",
         "outputs": [
             {
                 "internalType": "bool",

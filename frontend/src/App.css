@@ -312,6 +312,39 @@ input:disabled {
   padding: 12px;
 }
 
+.deferred-warning {
+  width: 100%;
+  border: 1px solid rgba(245, 158, 11, 0.5);
+  border-radius: 12px;
+  color: #d97706;
+  background: rgba(245, 158, 11, 0.1);
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 12px;
+}
+
+.helper-text {
+  width: 100%;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.claim-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: 14px;
+  background: var(--accent-bg);
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.claim-panel p {
+  margin: 0;
+}
+
 .danger-button {
   border-color: rgba(239, 68, 68, 0.45);
   color: #ef4444;

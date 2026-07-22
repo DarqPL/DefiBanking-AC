@@ -63,9 +63,9 @@ The frontend currently points to these Sepolia deployments:
 | Contract | Address |
 | --- | --- |
 | `MockUSDC` | `0x3Cb2AE0859d0B2aFe20d5f16Bf9e2E35A1cb2Cb8` |
-| `VaultManager` | `0x8b7FbAca6606610BD953EE65e77911d69573BC81` |
-| `SavingCore` | `0x74E9BB5E8B755F0714c1AfF8f8A4672E5471C4Cb` |
-| `DepositMarketplace` | `0xDB65a61f66400a5F9E5eB0cB78E08933c109ca5a` |
+| `VaultManager` | `0x68749ba818599EB6eE66fEA1Aa526C60411C78aF` |
+| `SavingCore` | `0xE4B8E29d98D756950f45d08Ad7fc657d57B463cb` |
+| `DepositMarketplace` | `0x47580694831874a6ad762515c3A436d83e7dc295` |
 
 Local deployments generate new addresses. Update `frontend/src/config.ts` if using a different deployment.
 
@@ -281,6 +281,8 @@ Frontend features:
 - Deposit history/details.
 - Ownership-aware active deposit NFT list.
 - Collapsed history for inactive, transferred, sold, or marketplace-escrowed deposits.
+- Principal-safe maturity withdrawal warning when the vault cannot pay interest.
+- Deferred interest claim cards with one `Claim Interest` action per deposit.
 - Estimated interest display.
 - Early withdrawal.
 - Marketplace page for active listings, listable deposit NFTs, seller listings, buy/list/cancel actions, and Marketplace Terms v1 acceptance.
@@ -312,9 +314,9 @@ npm run bot:auto-renew:sepolia
 Latest recorded contract verification:
 
 - `npm.cmd run compile`: passed.
-- `npm.cmd test`: passed with `65 passing`.
+- `npm.cmd test`: passed with `73 passing`.
 - `npx.cmd hardhat coverage`: passed.
-- Coverage: `100%` statements, `95.67%` branches, `100%` functions, `100%` lines.
+- Coverage: `100%` statements, `95.45%` branches, `100%` functions, `100%` lines.
 
 Latest recorded frontend verification:
 
@@ -323,114 +325,92 @@ Latest recorded frontend verification:
 
 The frontend build may show a non-blocking Vite warning that the main JavaScript chunk is larger than `500 kB` after minification.
 
-## Design Answers
+## Section 8.2 Design Answers
 
-### Transferable Certificate
+### 1. Transferable Certificate
 
-The current NFT owner controls withdrawal and renewal. This means if Alice transfers or sells the deposit NFT to Bob, Bob can withdraw or renew the deposit.
+The current ERC721 owner controls the deposit. If Alice sells or transfers her deposit NFT to Bob before maturity, Bob can withdraw or renew the deposit, and Alice cannot. This matches the idea that the NFT is the certificate/passbook for the saving position.
 
-The deciding checks are in `SavingCore.withdrawAtMaturity`, `SavingCore.earlyWithdraw`, and `SavingCore.renewDeposit`, where the contract compares `ownerOf(depositId)` with `msg.sender`. This is useful because the NFT represents ownership of the deposit position, but it also means users must understand that transferring the NFT transfers control of the deposit.
+The rule is decided by checking `ownerOf(depositId)` against the caller. In maturity withdrawal, the current NFT owner is stored as `account` and must equal the caller:
 
-#### Phase 16 Question 1: Marketplace For Transferable Certificates
+```solidity
+address account = msg.sender;
+if (ownerOf(depositId) != account) revert NotDepositOwner();
+```
 
-The transferable certificate answer is implemented with an escrow marketplace instead of a metadata-only marketplace. The real certificate is the ERC721 token minted by the official `SavingCore` contract. Ownership of that token is what controls the deposit.
-
-The withdrawal and renewal authority is the current NFT owner, not the original depositor:
+For early withdrawal, the same ownership rule is used:
 
 ```solidity
 if (ownerOf(depositId) != msg.sender) revert NotDepositOwner();
 ```
 
-This ownership check is used by `withdrawAtMaturity`, `earlyWithdraw`, and `renewDeposit` in `contracts/SavingCore.sol`.
-
-New deposit NFTs are minted with `_safeMint`, so contract receivers like `DepositMarketplace` can reject unsafe renewal mints while still allowing normal wallet minting:
+For manual renewal, the current NFT owner must also be the caller:
 
 ```solidity
-_safeMint(account, depositId);
+address account = ownerOf(depositId);
+if (account != msg.sender) revert NotDepositOwner();
 ```
 
-Marketplace listing escrows the NFT, validates the active deposit and terms hash, records the seller and price, then transfers the NFT from the seller into the marketplace:
+This behavior is useful because it makes deposit NFTs transferable financial positions. It is also dangerous if users do not understand the consequence: transferring the NFT transfers control over withdrawal and renewal rights.
+
+### 2. Empty Vault
+
+The base spec says maturity withdrawal should revert if the vault cannot pay interest. The problem is that this can block the user from receiving their own principal even though principal is held separately in `SavingCore`. That is unfair because an empty bank-funded interest vault should not lock user principal.
+
+I chose the improved design: principal is always returned at maturity. If the vault cannot pay the full interest, the contract records the unpaid interest as a later claim.
+
+The unpaid interest is tracked per deposit:
 
 ```solidity
-function listDeposit(uint256 depositId, uint256 price, bytes32 acceptedTermsHash) external whenNotPaused {
-    if (price == 0) revert InvalidPrice();
-    if (acceptedTermsHash != currentTermsHash) revert InvalidTerms();
-    if (listings[depositId].seller != address(0)) revert AlreadyListed();
+mapping(uint256 depositId => uint256 amount) public unpaidInterest;
+mapping(uint256 depositId => address claimant) public interestClaimant;
+```
 
-    _validateListableDeposit(depositId, msg.sender);
+At maturity, `SavingCore` closes the deposit and transfers principal first. Then it tries to pay interest from `VaultManager`. If that payment fails, the interest is recorded instead of reverting the whole withdrawal:
 
-    listings[depositId] = Listing({ seller: msg.sender, price: uint96(price) });
-    listedDepositIds.push(depositId);
-    listedIndexPlusOne[depositId] = listedDepositIds.length;
+```solidity
+deposit.status = DepositStatus.Withdrawn;
+_burn(depositId);
 
-    expectedDepositIdPlusOne = depositId + 1;
-    savingCore.safeTransferFrom(msg.sender, address(this), depositId);
-    expectedDepositIdPlusOne = 0;
-
-    emit Listed(depositId, msg.sender, price, acceptedTermsHash);
+token.safeTransfer(account, principal);
+if (interest != 0) {
+    try vaultManager.payInterest(account, interest) {
+        paidInterest = interest;
+    } catch {
+        unpaidInterest[depositId] = interest;
+        interestClaimant[depositId] = account;
+        emit InterestDeferred(depositId, account, interest);
+    }
 }
 ```
 
-Purchase pays the seller in MockUSDC and transfers the escrowed NFT to the buyer. After this, the buyer is the current deposit NFT owner and controls the deposit position:
+The stored claimant can later call `claimInterest(depositId)` after the vault has enough liquidity:
 
 ```solidity
-function buyDeposit(uint256 depositId) external whenNotPaused {
-    Listing memory listing = listings[depositId];
-    if (listing.seller == address(0)) revert ListingNotFound();
-    if (listing.seller == msg.sender) revert SelfBuyNotAllowed();
+uint256 amount = unpaidInterest[depositId];
+if (amount == 0) revert NoUnpaidInterest();
 
-    _removeListing(depositId);
+address claimant = interestClaimant[depositId];
+if (claimant != msg.sender) revert NotInterestClaimant();
+if (!vaultManager.canPayInterest(amount)) revert InterestUnavailable();
 
-    paymentToken.safeTransferFrom(msg.sender, listing.seller, listing.price);
-    savingCore.safeTransferFrom(address(this), msg.sender, depositId);
+unpaidInterest[depositId] = 0;
+delete interestClaimant[depositId];
 
-    emit ListingPurchased(depositId, listing.seller, msg.sender, listing.price);
-}
+vaultManager.payInterest(msg.sender, amount);
 ```
 
-Seller cancellation removes the listing and returns the NFT from escrow:
+Manual and auto-renewal still require the vault to actually pay interest before compounding. This prevents the contract from creating a new deposit with interest that was not really received:
 
 ```solidity
-function cancelListing(uint256 depositId) external {
-    Listing memory listing = listings[depositId];
-    if (listing.seller == address(0)) revert ListingNotFound();
-    if (listing.seller != msg.sender) revert NotSeller();
-
-    _cancelListing(depositId, listing.seller, false);
-}
+if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
 ```
-
-The frontend dashboard also follows current NFT ownership. It discovers candidate deposits from `DepositOpened` and ERC721 `Transfer` events, then classifies deposits by `ownerOf(depositId)` and active status. Only currently owned active NFTs appear in `My Active Deposit NFTs`:
-
-```ts
-if (deposit.status === 1n && isSameAddress(deposit.owner, account)) {
-  nextActiveDeposits.push(deposit);
-  continue;
-}
-```
-
-Transferred, sold, inactive, and marketplace-escrowed deposits move into the collapsed history section instead of remaining in the active list.
-
-The marketplace frontend shows Marketplace Terms v1 and requires explicit acceptance before listing. It reads the on-chain terms hash and passes it into `listDeposit`:
-
-```ts
-const listTx = await depositMarketplace.listDeposit(depositId, price, currentTermsHash);
-await listTx.wait();
-```
-
-This means a stale UI cannot silently list under old terms; if the owner updates `currentTermsHash`, a transaction using the old hash reverts with `InvalidTerms`.
-
-### Empty Vault
-
-The base design follows the assignment rule: if the vault cannot pay required interest, the maturity withdrawal or renewal reverts. Principal is held in `SavingCore`, but the transaction cannot complete because the full principal-plus-interest flow requires `VaultManager.payInterest` to succeed.
-
-This can be inconvenient because a user may be blocked from closing a matured deposit until the vault is funded. A better future design would allow principal withdrawal first and record unpaid interest as a later claim, but this implementation keeps the base behavior simple and matches the assignment requirement.
 
 ### Dead Bot
 
 If the auto-renew bot is offline, deposits are not automatically renewed. The deposit remains active until a valid action is mined.
 
-The user does not lose principal. Before any auto-renew transaction is mined, the NFT owner can still call maturity withdrawal or manual renewal after maturity. A future improvement could add a user-facing stale-deposit recovery flow or multiple independent bot runners.
+The user does not lose principal. Before any auto-renew transaction is mined, the NFT owner can still call maturity withdrawal after maturity, and can manually renew if the vault can pay the interest being compounded. A future improvement could add a user-facing stale-deposit recovery flow or multiple independent bot runners.
 
 ### Rounding Dust
 
@@ -455,3 +435,116 @@ Manual renewal into a disabled plan is blocked because `renewDeposit` checks tha
 A realistic attack is double withdrawal: a user tries to withdraw the same deposit twice to receive principal or interest again.
 
 The contract prevents this by requiring the deposit status to be `Active` through `_getActiveDeposit`, then changing the status before external token transfers. Maturity withdrawal sets the status to `Withdrawn`, early withdrawal sets it to `EarlyWithdrawn`, manual renewal sets it to `ManualRenewed`, and auto-renewal sets it to `AutoRenewed`. After the first successful action, repeated withdrawal or renewal fails because the deposit is no longer active.
+
+## Creative Challenge Answer
+
+### C1: Principal Is Always Safe
+
+The problem with the base empty-vault rule is that a user can reach maturity but still be unable to recover principal if the vault cannot pay interest. Since `SavingCore` holds user principal and `VaultManager` holds bank-funded interest liquidity, the interest vault should not be able to lock the user's own money.
+
+The implemented solution is principal-safe maturity withdrawal:
+
+```text
+Principal is always paid from SavingCore.
+Interest is paid from VaultManager only when liquidity is available.
+If interest cannot be paid, unpaid interest is recorded as a later claim.
+```
+
+This is implemented by storing unpaid interest and the claimant:
+
+```solidity
+mapping(uint256 depositId => uint256 amount) public unpaidInterest;
+mapping(uint256 depositId => address claimant) public interestClaimant;
+```
+
+When the user withdraws at maturity, the contract burns/closes the deposit and pays principal. Then it attempts the vault interest transfer. If the vault cannot pay, the contract emits `InterestDeferred` and stores the claim:
+
+```solidity
+token.safeTransfer(account, principal);
+if (interest != 0) {
+    try vaultManager.payInterest(account, interest) {
+        paidInterest = interest;
+    } catch {
+        unpaidInterest[depositId] = interest;
+        interestClaimant[depositId] = account;
+        emit InterestDeferred(depositId, account, interest);
+    }
+}
+```
+
+The user can later claim the recorded interest:
+
+```solidity
+function claimInterest(uint256 depositId) external whenNotPaused {
+    uint256 amount = unpaidInterest[depositId];
+    if (amount == 0) revert NoUnpaidInterest();
+
+    address claimant = interestClaimant[depositId];
+    if (claimant != msg.sender) revert NotInterestClaimant();
+    if (!vaultManager.canPayInterest(amount)) revert InterestUnavailable();
+
+    unpaidInterest[depositId] = 0;
+    delete interestClaimant[depositId];
+
+    emit InterestClaimed(depositId, msg.sender, amount);
+
+    vaultManager.payInterest(msg.sender, amount);
+}
+```
+
+The trade-off is that the protocol now has extra accounting for deferred interest claims. I accepted this trade-off because it protects the most important user guarantee: principal can always be recovered at maturity.
+
+Renewals are intentionally stricter. Manual and auto-renewal can only happen when the vault can actually pay the interest being compounded:
+
+```solidity
+if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
+```
+
+This prevents creating a new deposit with unpaid interest that `SavingCore` does not actually hold.
+
+### C5: Built-In Escrow Marketplace For Savings NFTs
+
+The extra problem I chose for C5 is that users may want to sell their savings positions before maturity. Because deposit NFTs are transferable, they could sell them externally, but that creates trust and authenticity problems. A buyer needs to know the NFT is the real `SavingCore` certificate, that the deposit is still active, and that payment and NFT transfer happen safely.
+
+The solution is a built-in `DepositMarketplace` contract. It escrows official `SavingCore` deposit NFTs, lets sellers list them for MockUSDC, and transfers payment and the NFT atomically during purchase.
+
+Listing checks that the caller owns the real deposit NFT, the deposit is active, the terms hash is current, and the deposit is not inside the restricted no-listing window:
+
+```solidity
+if (price == 0 || price > type(uint96).max) revert InvalidPrice();
+if (acceptedTermsHash != currentTermsHash) revert InvalidTerms();
+if (listingIndexPlusOne[depositId] != 0) revert AlreadyListed();
+if (savingCore.ownerOf(depositId) != msg.sender) revert NotDepositOwner();
+
+(uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
+if (status != ISavingCoreMarketplace.DepositStatus.Active) revert DepositNotActive();
+if (_isRestricted(startAt, maturityAt)) revert RestrictedWindow();
+
+listings[depositId] = Listing({seller: msg.sender, price: uint96(price)});
+_addListing(depositId);
+
+expectedDepositIdPlusOne = depositId + 1;
+savingCore.safeTransferFrom(msg.sender, address(this), depositId);
+expectedDepositIdPlusOne = 0;
+```
+
+Purchase pays the seller and transfers the escrowed NFT to the buyer:
+
+```solidity
+Listing memory listing = listings[depositId];
+if (listing.seller == address(0)) revert ListingNotFound();
+if (listing.seller == msg.sender) revert SelfBuyNotAllowed();
+
+(uint64 startAt, uint64 maturityAt, ISavingCoreMarketplace.DepositStatus status) = _depositState(depositId);
+if (status != ISavingCoreMarketplace.DepositStatus.Active) revert DepositNotActive();
+if (_isRestricted(startAt, maturityAt)) revert RestrictedWindow();
+
+_removeListing(depositId);
+
+paymentToken.safeTransferFrom(msg.sender, listing.seller, listing.price);
+savingCore.safeTransferFrom(address(this), msg.sender, depositId);
+```
+
+After purchase, the buyer owns the actual ERC721 deposit certificate. Since `SavingCore` uses `ownerOf(depositId)` for withdrawal and renewal authority, the buyer receives the future deposit rights.
+
+This improves user experience because users do not need to rely on external marketplaces or informal OTC transfers. If a seller lists at a reasonable price, buyers can safely acquire the position through the protocol's own escrow flow. The trade-off is extra contract and frontend complexity, plus the need for marketplace terms and cleanup logic for stale listings.

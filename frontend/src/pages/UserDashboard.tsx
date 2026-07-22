@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESSES } from "../config";
+import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
 
@@ -25,6 +25,9 @@ type DepositInfo = {
   status: bigint;
   owner: string | null;
   historyNote?: string;
+  unpaidInterest: bigint;
+  interestClaimant: string | null;
+  canPayInterest: boolean;
 };
 
 const DEPOSIT_STATUS: Record<string, string> = {
@@ -36,8 +39,7 @@ const DEPOSIT_STATUS: Record<string, string> = {
   "5": "Auto Renewed",
 };
 
-const DEPLOYMENT_BLOCK = 11_313_284;
-const CHUNK_SIZE = 10_000;
+const CHUNK_SIZE = 2_000;
 
 function formatUsdc(value: bigint) {
   return `${ethers.formatUnits(value, 6)} USDC`;
@@ -102,11 +104,26 @@ function normalizeDeposit(id: bigint, deposit: unknown): DepositInfo {
     penaltyBpsAtOpen: values.penaltyBpsAtOpen,
     status: values.status,
     owner: null,
+    unpaidInterest: 0n,
+    interestClaimant: null,
+    canPayInterest: true,
   };
 }
 
 function isSameAddress(left: string | null | undefined, right: string | null | undefined) {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function parsedEventNames(receipt: ethers.TransactionReceipt, contractInterface: ethers.Interface) {
+  return receipt.logs
+    .map((log) => {
+      try {
+        return contractInterface.parseLog(log)?.name;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((name): name is string => name !== undefined);
 }
 
 async function queryFilterInChunks(
@@ -117,7 +134,7 @@ async function queryFilterInChunks(
   const latestBlockNumber = await provider.getBlockNumber();
   const events = [];
 
-  for (let fromBlock = DEPLOYMENT_BLOCK; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
+  for (let fromBlock = DEPLOYMENT_BLOCKS.SavingCore; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
     const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber);
     const chunk = await contract.queryFilter(filter, fromBlock, toBlock);
     events.push(...chunk);
@@ -216,6 +233,7 @@ function DepositCard({
   onEarlyWithdraw,
   onWithdraw,
   onRenew,
+  onClaimInterest,
   canManage = true,
 }: {
   deposit: DepositInfo;
@@ -227,6 +245,7 @@ function DepositCard({
   onEarlyWithdraw: (depositId: bigint) => void;
   onWithdraw: (depositId: bigint) => void;
   onRenew: (depositId: bigint) => void;
+  onClaimInterest: (depositId: bigint) => void;
   canManage?: boolean;
 }) {
   const isActive = deposit.status === 1n;
@@ -289,13 +308,19 @@ function DepositCard({
             </>
           ) : (
             <>
+              {!deposit.canPayInterest && maturityInterest > 0n && (
+                <p className="deferred-warning">
+                  Vault liquidity is not enough to pay your interest right now. If you withdraw, you will receive your
+                  principal now and your {formatUsdc(maturityInterest)} interest will be recorded as a later claim.
+                </p>
+              )}
               <button className="primary-button" type="button" onClick={() => onWithdraw(deposit.id)} disabled={isBusy}>
-                Withdraw
+                {deposit.canPayInterest ? "Withdraw Principal + Interest" : "Withdraw Principal Only"}
               </button>
               <select
                 value={renewPlanId}
                 onChange={(event) => onRenewPlanChange(deposit.id.toString(), event.target.value)}
-                disabled={isBusy || plans.length === 0}
+                disabled={isBusy || plans.length === 0 || !deposit.canPayInterest}
               >
                 {plans.map((plan) => (
                   <option key={plan.id.toString()} value={plan.id.toString()}>
@@ -307,12 +332,33 @@ function DepositCard({
                 className="secondary-button"
                 type="button"
                 onClick={() => onRenew(deposit.id)}
-                disabled={isBusy || plans.length === 0}
+                disabled={isBusy || plans.length === 0 || !deposit.canPayInterest}
               >
                 Renew
               </button>
+              {!deposit.canPayInterest && maturityInterest > 0n && (
+                <p className="helper-text">Renewal is unavailable because interest must be paid before it can be compounded.</p>
+              )}
             </>
           )}
+        </div>
+      )}
+
+      {canManage && deposit.unpaidInterest > 0n && (
+        <div className="claim-panel">
+          <p className="eyebrow">Deferred Interest Claim</p>
+          <p>
+            Principal was already withdrawn. Unpaid interest: <strong>{formatUsdc(deposit.unpaidInterest)}</strong>.
+          </p>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => onClaimInterest(deposit.id)}
+            disabled={isBusy || !deposit.canPayInterest}
+          >
+            Claim Interest
+          </button>
+          {!deposit.canPayInterest && <p className="helper-text">Waiting for vault funding. This claim checks liquidity again on-chain.</p>}
         </div>
       )}
     </article>
@@ -321,7 +367,7 @@ function DepositCard({
 
 export default function UserDashboard() {
   const { account, provider, contracts } = useWeb3();
-  const { mockUSDC, savingCore } = contracts;
+  const { mockUSDC, savingCore, vaultManager } = contracts;
   const [plans, setPlans] = useState<SavingPlan[]>([]);
   const [activeDeposits, setActiveDeposits] = useState<DepositInfo[]>([]);
   const [historyDeposits, setHistoryDeposits] = useState<DepositInfo[]>([]);
@@ -333,13 +379,18 @@ export default function UserDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [txStatus, setTxStatus] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [alertMessage, setAlertMessage] = useState("");
 
   const activePlans = useMemo(() => plans.filter((plan) => plan.enabled), [plans]);
+  const deferredInterestDeposits = useMemo(
+    () => historyDeposits.filter((deposit) => deposit.unpaidInterest > 0n && isSameAddress(deposit.interestClaimant, account)),
+    [account, historyDeposits]
+  );
   const isTxBusy = txStatus.length > 0;
 
   const parseError = useCallback((error: unknown) => {
-    return parseTransactionError(error, savingCore, null, mockUSDC);
-  }, [mockUSDC, savingCore]);
+    return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
+  }, [mockUSDC, savingCore, vaultManager]);
 
   const refreshDashboard = useCallback(async () => {
     if (!savingCore) return;
@@ -376,15 +427,15 @@ export default function UserDashboard() {
         return;
       }
 
-      const [openedEvents, transferInEvents, transferOutEvents] = await Promise.all([
-        queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider),
-        queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider),
-        queryFilterInChunks(savingCore, savingCore.filters.Transfer(account, null, null), provider),
-      ]);
+      const openedEvents = await queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider);
+      const transferInEvents = await queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider);
+      const transferOutEvents = await queryFilterInChunks(savingCore, savingCore.filters.Transfer(account, null, null), provider);
+      const interestDeferredEvents = await queryFilterInChunks(savingCore, savingCore.filters.InterestDeferred(null, account), provider);
+      const interestClaimedEvents = await queryFilterInChunks(savingCore, savingCore.filters.InterestClaimed(null, account), provider);
 
       const candidateIds = new Set<string>();
 
-      for (const event of [...openedEvents, ...transferInEvents, ...transferOutEvents]) {
+      for (const event of [...openedEvents, ...transferInEvents, ...transferOutEvents, ...interestDeferredEvents, ...interestClaimedEvents]) {
         if (!("args" in event) || !event.args) continue;
         const args = event.args as { depositId?: bigint; tokenId?: bigint };
         const depositId = args.depositId ?? args.tokenId;
@@ -399,6 +450,20 @@ export default function UserDashboard() {
             deposit.owner = ethers.getAddress((await savingCore.ownerOf(deposit.id)) as string);
           } catch {
             deposit.owner = null;
+          }
+
+          const [unpaidInterest, claimant] = await Promise.all([
+            savingCore.unpaidInterest(deposit.id) as Promise<bigint>,
+            savingCore.interestClaimant(deposit.id) as Promise<string>,
+          ]);
+          deposit.unpaidInterest = unpaidInterest;
+          deposit.interestClaimant = claimant === ethers.ZeroAddress ? null : ethers.getAddress(claimant);
+
+          if (deposit.status === 1n) {
+            const preview = await savingCore.previewMaturitySettlement(deposit.id) as { canPayInterest: boolean };
+            deposit.canPayInterest = preview.canPayInterest;
+          } else if (deposit.unpaidInterest > 0n && vaultManager) {
+            deposit.canPayInterest = await vaultManager.canPayInterest(deposit.unpaidInterest) as boolean;
           }
 
           return deposit;
@@ -418,6 +483,8 @@ export default function UserDashboard() {
           deposit.historyNote = "Listed in marketplace escrow";
         } else if (deposit.status === 1n && deposit.owner) {
           deposit.historyNote = "Transferred or sold to another wallet";
+        } else if (deposit.unpaidInterest > 0n && isSameAddress(deposit.interestClaimant, account)) {
+          deposit.historyNote = "Principal withdrawn; interest claim pending";
         } else {
           deposit.historyNote = DEPOSIT_STATUS[deposit.status.toString()] ?? "Inactive";
         }
@@ -432,16 +499,22 @@ export default function UserDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, [account, parseError, provider, savingCore]);
+  }, [account, parseError, provider, savingCore, vaultManager]);
 
-  const runTransaction = useCallback(async (label: string, action: () => Promise<ethers.TransactionResponse>) => {
+  const runTransaction = useCallback(async (
+    label: string,
+    action: () => Promise<ethers.TransactionResponse>,
+    successMessage = "Transaction confirmed."
+  ) => {
     setErrorMessage("");
+    setAlertMessage("");
     setTxStatus(label);
 
     try {
       const tx = await action();
       setTxStatus("Waiting for confirmation...");
       await tx.wait();
+      setAlertMessage(successMessage);
       await refreshDashboard();
     } catch (error) {
       setErrorMessage(parseError(error));
@@ -449,6 +522,32 @@ export default function UserDashboard() {
       setTxStatus("");
     }
   }, [parseError, refreshDashboard]);
+
+  const handleMaturityWithdraw = useCallback(async (depositId: bigint) => {
+    if (!savingCore) return;
+
+    setErrorMessage("");
+    setAlertMessage("");
+    setTxStatus("Withdrawing at maturity...");
+
+    try {
+      const tx = await savingCore.withdrawAtMaturity(depositId) as ethers.TransactionResponse;
+      setTxStatus("Waiting for confirmation...");
+      const receipt = await tx.wait();
+      const eventNames = receipt ? parsedEventNames(receipt, savingCore.interface) : [];
+
+      setAlertMessage(
+        eventNames.includes("InterestDeferred")
+          ? "Principal withdrawn. The vault did not have enough funds to pay your interest, so your unpaid interest was recorded and can be claimed later."
+          : "Principal and interest withdrawn successfully."
+      );
+      await refreshDashboard();
+    } catch (error) {
+      setErrorMessage(parseError(error));
+    } finally {
+      setTxStatus("");
+    }
+  }, [parseError, refreshDashboard, savingCore]);
 
   async function handleOpenDeposit() {
     if (!account || !mockUSDC || !savingCore || !selectedPlanId || !depositAmountInput) return;
@@ -478,6 +577,7 @@ export default function UserDashboard() {
       await depositTx.wait();
 
       setDepositAmountInput("");
+      setAlertMessage("Deposit opened successfully.");
       await refreshDashboard();
     } catch (error) {
       setErrorMessage(parseError(error));
@@ -499,7 +599,18 @@ export default function UserDashboard() {
 
     void runTransaction(
       "Renewing...",
-      () => savingCore.renewDeposit(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>
+      () => savingCore.renewDeposit(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>,
+      "Deposit renewed successfully."
+    );
+  }
+
+  function handleClaimInterest(depositId: bigint) {
+    if (!savingCore) return;
+
+    void runTransaction(
+      "Claiming deferred interest...",
+      () => savingCore.claimInterest(depositId) as Promise<ethers.TransactionResponse>,
+      "Deferred interest claimed successfully."
     );
   }
 
@@ -520,6 +631,7 @@ export default function UserDashboard() {
       )}
       {isLoading && <p className="status-message">Loading contract data...</p>}
       {txStatus && <p className="status-message">{txStatus}</p>}
+      {alertMessage && <p className="success-message">{alertMessage}</p>}
       {errorMessage && <p className="error-message">{errorMessage}</p>}
 
       <section className="section-panel">
@@ -581,18 +693,43 @@ export default function UserDashboard() {
                     () => savingCore?.earlyWithdraw(depositId) as Promise<ethers.TransactionResponse>
                   )
                 }
-                onWithdraw={(depositId) =>
-                  void runTransaction(
-                    "Withdrawing at maturity...",
-                    () => savingCore?.withdrawAtMaturity(depositId) as Promise<ethers.TransactionResponse>
-                  )
-                }
+                onWithdraw={(depositId) => void handleMaturityWithdraw(depositId)}
                 onRenew={handleRenew}
+                onClaimInterest={handleClaimInterest}
               />
             ))
           )}
         </div>
       </section>
+
+      {deferredInterestDeposits.length > 0 && (
+        <section className="section-panel">
+          <div className="section-header">
+            <p className="eyebrow">Deferred Interest Claims</p>
+            <h2>Claim unpaid interest per deposit</h2>
+            <p>
+              Each claim is independent. If the vault can only pay one claim, choose which deposit to claim first.
+            </p>
+          </div>
+          <div className="card-grid">
+            {deferredInterestDeposits.map((deposit) => (
+              <DepositCard
+                key={`claim-${deposit.id.toString()}`}
+                deposit={deposit}
+                plans={activePlans}
+                now={now}
+                isBusy={isTxBusy}
+                renewPlanId={renewPlanByDeposit[deposit.id.toString()] ?? activePlans[0]?.id.toString() ?? ""}
+                onRenewPlanChange={handleRenewPlanChange}
+                onEarlyWithdraw={() => undefined}
+                onWithdraw={() => undefined}
+                onRenew={() => undefined}
+                onClaimInterest={handleClaimInterest}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       {showHistory && (
         <section className="section-panel">
@@ -616,6 +753,7 @@ export default function UserDashboard() {
                   onEarlyWithdraw={() => undefined}
                   onWithdraw={() => undefined}
                   onRenew={() => undefined}
+                  onClaimInterest={handleClaimInterest}
                   canManage={false}
                 />
               ))

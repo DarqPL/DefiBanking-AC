@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESSES } from "../config";
+import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
 
@@ -23,8 +23,7 @@ type MarketplaceListing = {
   deposit: DepositInfo;
 };
 
-const DEPLOYMENT_BLOCK = 11_313_284;
-const CHUNK_SIZE = 10_000;
+const CHUNK_SIZE = 2_000;
 const LISTINGS_PAGE_SIZE = 12;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -102,11 +101,12 @@ async function queryFilterInChunks(
   contract: ethers.Contract,
   filter: ethers.DeferredTopicFilter,
   provider: ethers.BrowserProvider,
+  startBlock: number,
 ) {
   const latestBlockNumber = await provider.getBlockNumber();
   const events = [];
 
-  for (let fromBlock = DEPLOYMENT_BLOCK; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
+  for (let fromBlock = startBlock; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
     const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber);
     const chunk = await contract.queryFilter(filter, fromBlock, toBlock);
     events.push(...chunk);
@@ -398,9 +398,9 @@ export default function Marketplace() {
       }
 
       const [openedEvents, transferInEvents, sellerListingEvents] = await Promise.all([
-        queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider),
-        queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider),
-        queryFilterInChunks(depositMarketplace, depositMarketplace.filters.Listed(null, account), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider, DEPLOYMENT_BLOCKS.SavingCore),
+        queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider, DEPLOYMENT_BLOCKS.SavingCore),
+        queryFilterInChunks(depositMarketplace, depositMarketplace.filters.Listed(null, account), provider, DEPLOYMENT_BLOCKS.DepositMarketplace),
       ]);
 
       const sellerListingIds = new Set<string>();
