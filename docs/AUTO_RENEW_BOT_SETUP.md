@@ -107,6 +107,8 @@ For each request, the endpoint:
 - Scans deposit IDs from `0` to `nextDepositId - 1` because the first deposit NFT id is `0`.
 - Reads each deposit from `SavingCore.deposits(depositId)`.
 - Skips deposits that are not `Active`.
+- Reads each active deposit's original plan status with a per-run cache.
+- Skips deposits whose original plan is disabled, so the bot does not waste gas on renewals the contract will reject.
 - Checks `block.timestamp >= maturityAt + AUTO_RENEW_GRACE_PERIOD`.
 - Calls `autoRenewDeposit(depositId)` for eligible deposits.
 - Continues scanning even if one renewal fails.
@@ -131,6 +133,7 @@ Admin APR updates do not change the APR of an already active deposit. Each depos
 Manual renew and auto-renew intentionally use different APR rules:
 
 - Manual renew creates a new deposit using the selected new plan's current APR.
-- Auto-renew creates a new deposit using the old deposit's original APR snapshot.
+- Auto-renew creates a new deposit using the old deposit's original APR snapshot only while the original plan remains enabled.
 
 This matches the assignment rule that auto-renew protects the user from an admin lowering the APR before the bot renews the deposit.
+If the admin disables the original plan, both the bot and contract block auto-renew because disabling a plan closes it for future terms.

@@ -599,6 +599,19 @@ describe("SavingCore", function () {
       expect((await savingCore.deposits(0)).status).to.equal(1n);
     });
 
+    it("blocks auto-renewal when the original plan is disabled but still allows maturity withdrawal", async function () {
+      const { user, bot, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await savingCore.disablePlan(0);
+      await time.increase(Number(tenorSeconds + autoRenewGracePeriod));
+
+      await expectCustomError(savingCore.connect(bot).autoRenewDeposit.staticCall(0), savingCore.interface, "PlanNotEnabled");
+      expect((await savingCore.deposits(0)).status).to.equal(1n);
+
+      await savingCore.connect(user).withdrawAtMaturity(0);
+      expect((await savingCore.deposits(0)).status).to.equal(2n);
+    });
+
     it("handles zero-interest manual and auto renewals without touching the vault", async function () {
       const { user, bot, mockUSDC, vaultAddress, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
       await savingCore.createPlan(tenorDays, 0, minDeposit, maxDeposit, penaltyBps, true);

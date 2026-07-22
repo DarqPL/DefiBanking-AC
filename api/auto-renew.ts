@@ -74,12 +74,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let eligible = 0;
   let renewed = 0;
   let failed = 0;
+  const planEnabledCache = new Map<string, boolean>();
+
+  async function isPlanEnabled(planId: bigint): Promise<boolean> {
+    const key = planId.toString();
+    const cached = planEnabledCache.get(key);
+    if (cached !== undefined) return cached;
+
+    const plan = await savingCore.savingPlans(planId);
+    planEnabledCache.set(key, plan.enabled);
+    return plan.enabled;
+  }
 
   for (let depositId = 0n; depositId < nextDepositId; depositId++) {
     checked += 1;
 
     const deposit = await savingCore.deposits(depositId);
     if (Number(deposit.status) !== DEPOSIT_STATUS_ACTIVE) continue;
+    if (!(await isPlanEnabled(deposit.planId))) continue;
 
     const renewAfter = BigInt(deposit.maturityAt) + gracePeriod;
     if (now < renewAfter) continue;

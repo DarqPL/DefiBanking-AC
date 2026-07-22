@@ -16,7 +16,9 @@ async function main() {
   }
 
   const savingCoreDeployment = await deployments.get("SavingCore");
-  const savingCore = await ethers.getContractAt("SavingCore", savingCoreDeployment.address, bot ?? ethers.provider);
+  const savingCore = bot
+    ? await ethers.getContractAt("SavingCore", savingCoreDeployment.address, bot)
+    : await ethers.getContractAt("SavingCore", savingCoreDeployment.address);
   const latestBlock = await ethers.provider.getBlock("latest");
   if (!latestBlock) throw new Error("Unable to read latest block");
 
@@ -28,6 +30,17 @@ async function main() {
   let eligible = 0;
   let renewed = 0;
   let failed = 0;
+  const planEnabledCache = new Map<string, boolean>();
+
+  async function isPlanEnabled(planId: bigint): Promise<boolean> {
+    const key = planId.toString();
+    const cached = planEnabledCache.get(key);
+    if (cached !== undefined) return cached;
+
+    const plan = await savingCore.savingPlans(planId);
+    planEnabledCache.set(key, plan.enabled);
+    return plan.enabled;
+  }
 
   console.log(`Auto-renew bot running on ${network.name}`);
   console.log(`Mode: ${dryRun ? "dry run" : "send transactions"}`);
@@ -40,6 +53,7 @@ async function main() {
 
     const deposit = await savingCore.deposits(depositId);
     if (Number(deposit.status) !== DEPOSIT_STATUS_ACTIVE) continue;
+    if (!(await isPlanEnabled(deposit.planId))) continue;
 
     const renewAfter = BigInt(deposit.maturityAt) + gracePeriod;
     if (now < renewAfter) continue;

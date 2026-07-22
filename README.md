@@ -128,7 +128,8 @@ After `maturityAt + 3 days`, anyone can call `autoRenewDeposit(depositId)`.
 - Interest is pulled from `VaultManager` into `SavingCore`.
 - New principal becomes `old principal + interest`.
 - A new deposit NFT is minted to the current NFT owner.
-- The renewed deposit preserves the old deposit's original APR and penalty snapshots.
+- The renewed deposit preserves the old deposit's original APR and penalty snapshots while the original plan remains enabled.
+- Auto-renew is rejected if the original plan is disabled.
 
 ### Marketplace Listing And Purchase
 
@@ -301,7 +302,7 @@ This project includes:
 
 The marketplace cleanup endpoint is `api/marketplace-cleanup.ts`. It scans all current listing IDs off-chain with `isListingStale(depositId)`. If no stale listing exists, it returns `mode: "skip"` and sends no transaction. If stale listings exist, it calls `DepositMarketplace.cleanListings(staleDepositIds)` from a bot wallet. It is intended to be triggered by cron-job.org or another scheduler.
 
-The Vercel endpoint should be called periodically with a `CRON_SECRET`. It scans active deposits and calls `autoRenewDeposit` for deposits that reached `maturityAt + 3 days`.
+The Vercel endpoint should be called periodically with a `CRON_SECRET`. It scans active deposits, skips deposits whose original plan is disabled, and calls `autoRenewDeposit` for enabled-plan deposits that reached `maturityAt + 3 days`.
 
 Local dry-run or bot command:
 
@@ -314,7 +315,7 @@ npm run bot:auto-renew:sepolia
 Latest recorded contract verification:
 
 - `npm.cmd run compile`: passed.
-- `npm.cmd test`: passed with `73 passing`.
+- `npm.cmd test`: passed with `74 passing`.
 - `npx.cmd hardhat coverage`: passed.
 - Coverage: `100%` statements, `95.45%` branches, `100%` functions, `100%` lines.
 
@@ -352,6 +353,8 @@ if (account != msg.sender) revert NotDepositOwner();
 ```
 
 This behavior is useful because it makes deposit NFTs transferable financial positions. It is also dangerous if users do not understand the consequence: transferring the NFT transfers control over withdrawal and renewal rights.
+
+Test coverage: `test/SavingCore.test.ts` includes `lets the transferred deposit NFT owner withdraw at maturity`, `lets the transferred deposit NFT owner withdraw early`, and `lets the transferred deposit NFT owner manually renew at maturity`.
 
 ### 2. Empty Vault
 
@@ -406,35 +409,133 @@ Manual and auto-renewal still require the vault to actually pay interest before 
 if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
 ```
 
-### Dead Bot
+Test coverage: `test/SavingCore.test.ts` includes `pays principal and records unpaid interest when the vault is empty at maturity`, `records unpaid interest instead of silently paying principal only when the vault is underfunded`, and `lets the recorded claimant claim deferred interest after the vault is funded`.
 
-If the auto-renew bot is offline, deposits are not automatically renewed. The deposit remains active until a valid action is mined.
+### 3. Dead Bot
 
-The user does not lose principal. Before any auto-renew transaction is mined, the NFT owner can still call maturity withdrawal after maturity, and can manually renew if the vault can pay the interest being compounded. A future improvement could add a user-facing stale-deposit recovery flow or multiple independent bot runners.
+If the auto-renew bot is offline, deposits are not automatically renewed. The deposit remains active until a valid action is mined, so the user does not lose principal. The NFT owner can still call maturity withdrawal after maturity, and can manually renew if the vault can pay the interest being compounded.
 
-### Rounding Dust
+The protection is that auto-renew is permissionless. `autoRenewDeposit` is `external` and has no bot-only or owner-only modifier:
+
+```solidity
+function autoRenewDeposit(uint256 depositId) external whenNotPaused {
+```
+
+The function only checks that the grace period has ended and that the original plan is still enabled:
+
+```solidity
+uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
+
+SavingPlan storage originalPlan = _getExistingPlan(oldDeposit.planId);
+if (!originalPlan.enabled) revert PlanNotEnabled();
+```
+
+The user can still withdraw at maturity because `withdrawAtMaturity` only requires NFT ownership and `block.timestamp >= maturityAt`:
+
+```solidity
+if (ownerOf(depositId) != account) revert NotDepositOwner();
+if (block.timestamp < deposit.maturityAt) revert NotMatured();
+```
+
+Test coverage: `test/SavingCore.test.ts` includes `auto-renews permissionlessly after the 3-day grace period and preserves original economics`.
+
+### 4. Rounding Dust
 
 Interest uses integer division, so fractional token units are rounded down. The user receives the rounded-down interest amount, and the tiny unpaid dust remains in the vault or is never pulled from it.
 
-This cannot overpay users because multiplication happens before division and the final division truncates downward. The tests include rounding behavior for maturity withdrawals to prove the formula pays the expected truncated value.
+The formula is:
 
-### Boundary Times
+```solidity
+interest = (deposit.principal * deposit.aprBpsAtOpen * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
+```
+
+The dust stays economically with the vault/protocol because the vault only pays the rounded-down `interest`. There is no separate dust variable; the fractional remainder is simply not paid. This cannot overpay users, cause a wrong balance, or cause a revert by itself because the same rounded-down value is used for both balance checks and payment.
+
+Test coverage: `test/SavingCore.test.ts` includes `withdraws principal plus exact truncated simple interest at maturity`, which calculates the same interest value and checks both the user balance and vault balance after withdrawal.
+
+### 5. Boundary Times
 
 At the exact `maturityAt` timestamp, withdrawal is treated as maturity withdrawal, not early withdrawal. `withdrawAtMaturity` rejects only when `block.timestamp < maturityAt`, while `earlyWithdraw` rejects when `block.timestamp >= maturityAt`.
 
+```solidity
+if (block.timestamp < deposit.maturityAt) revert NotMatured();
+if (block.timestamp >= deposit.maturityAt) revert AlreadyMatured();
+```
+
+Manual renewal is also allowed at the exact maturity timestamp because it rejects only before maturity:
+
+```solidity
+if (block.timestamp < oldDeposit.maturityAt) revert NotMatured();
+```
+
 Auto-renew is allowed at the exact end of the grace period. `autoRenewDeposit` rejects only when `block.timestamp < maturityAt + AUTO_RENEW_GRACE_PERIOD`, so `maturityAt + 3 days` is valid. At that exact point, manual renewal and auto-renewal can both be valid; whichever transaction is mined first changes the deposit status and prevents the other action from reusing the same deposit.
 
-### Disabled Plan With Active Deposits
+```solidity
+uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
+```
 
-Disabling a plan only blocks future deposits into that plan. Existing active deposits keep their original APR and penalty snapshots and can still be withdrawn at maturity or withdrawn early.
+Test coverage: `test/SavingCore.test.ts` checks `withdrawAtMaturity` reverts before maturity, `earlyWithdraw` reverts after maturity, `renewDeposit` reverts before maturity, and `autoRenewDeposit` reverts one second before grace ends then succeeds at the grace boundary.
 
-Manual renewal into a disabled plan is blocked because `renewDeposit` checks that the selected new plan is enabled. This keeps disabled plans from accepting new principal while preserving rights for already-open deposits.
+### 6. Disabled Plan With Active Deposits
 
-### Attack Thinking
+Disabling a plan does not break existing active deposits. Users who already opened deposits keep their original APR and penalty snapshots and can still withdraw early before maturity or withdraw at maturity.
+
+New deposits into the disabled plan are blocked:
+
+```solidity
+if (!plan.enabled) revert PlanNotEnabled();
+```
+
+Manual renewal into a disabled plan is blocked because `renewDeposit` checks that the selected new plan is enabled:
+
+```solidity
+SavingPlan storage newPlan = _getExistingPlan(newPlanId);
+if (!newPlan.enabled) revert PlanNotEnabled();
+```
+
+Auto-renew is also blocked if the original plan is disabled. This prevents a high-APR disabled plan from rolling forever after the admin closes it:
+
+```solidity
+SavingPlan storage originalPlan = _getExistingPlan(oldDeposit.planId);
+if (!originalPlan.enabled) revert PlanNotEnabled();
+```
+
+The official Vercel endpoint and fallback script bot also read each active deposit's original plan status with a per-run cache and skip disabled-plan deposits before sending a transaction. The contract check is still required because `autoRenewDeposit` is permissionless and anyone can call it directly.
+
+Test coverage: `test/SavingCore.test.ts` includes `rejects opening deposits for unknown plans, disabled plans, invalid limits, and maturity overflow`, `rejects invalid manual renewals`, and `blocks auto-renewal when the original plan is disabled but still allows maturity withdrawal`.
+
+### 7. Attack Thinking
 
 A realistic attack is double withdrawal: a user tries to withdraw the same deposit twice to receive principal or interest again.
 
 The contract prevents this by requiring the deposit status to be `Active` through `_getActiveDeposit`, then changing the status before external token transfers. Maturity withdrawal sets the status to `Withdrawn`, early withdrawal sets it to `EarlyWithdrawn`, manual renewal sets it to `ManualRenewed`, and auto-renewal sets it to `AutoRenewed`. After the first successful action, repeated withdrawal or renewal fails because the deposit is no longer active.
+
+The active-deposit check is:
+
+```solidity
+if (deposit.status == DepositStatus.None) revert DepositNotFound();
+if (deposit.status != DepositStatus.Active) revert DepositNotActive();
+```
+
+Maturity withdrawal closes the deposit before transferring principal:
+
+```solidity
+deposit.status = DepositStatus.Withdrawn;
+_burn(depositId);
+
+token.safeTransfer(account, principal);
+```
+
+Early withdrawal follows the same pattern:
+
+```solidity
+deposit.status = DepositStatus.EarlyWithdrawn;
+_burn(depositId);
+```
+
+Test coverage: `test/SavingCore.test.ts` includes `handles zero-interest maturity withdrawal and rejects non-owner or non-existent withdrawals`, which verifies a second maturity withdrawal reverts with `DepositNotActive`.
 
 ## Creative Challenge Answer
 

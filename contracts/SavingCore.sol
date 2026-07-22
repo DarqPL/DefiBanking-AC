@@ -572,6 +572,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
         if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 
+        SavingPlan storage originalPlan = _getExistingPlan(oldDeposit.planId);
+        if (!originalPlan.enabled) revert PlanNotEnabled();
+
         address account = ownerOf(depositId);
         uint256 oldPrincipal = oldDeposit.principal;
         uint256 interest = _calculateInterest(oldDeposit);
