@@ -146,6 +146,23 @@ contract VaultManager is Ownable, Pausable {
     }
 
     /**
+     * @notice Returns the token liquidity currently held by the vault.
+     * @return balance Current vault token balance.
+     */
+    function vaultBalance() external view returns (uint256 balance) {
+        balance = token.balanceOf(address(this));
+    }
+
+    /**
+     * @notice Returns whether the vault currently has enough liquidity to pay an interest amount.
+     * @param amount Interest amount to check.
+     * @return canPay Whether the vault balance is at least `amount`.
+     */
+    function canPayInterest(uint256 amount) external view returns (bool canPay) {
+        canPay = token.balanceOf(address(this)) >= amount;
+    }
+
+    /**
      * @notice Pays interest liquidity to a matured depositor.
      * @dev Callable only by the configured SavingCore contract.
      * @param to Recipient of the interest payment.

@@ -22,8 +22,6 @@ An NFT with the same metadata, APR, principal, and maturity date is not authenti
 
 This means transferred NFTs are valid passbooks. If Alice transfers a deposit NFT to Bob, Bob can withdraw or renew and Alice cannot.
 
-The frontend must be updated because it currently discovers deposits from `DepositOpened(account)` events. That shows deposits originally opened by a wallet, not deposits currently owned by a wallet.
-
 ## Marketplace Contract
 
 Add a new `DepositMarketplace` contract instead of adding marketplace storage to `SavingCore`.

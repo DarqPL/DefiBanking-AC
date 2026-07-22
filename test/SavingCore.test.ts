@@ -41,6 +41,18 @@ describe("SavingCore", function () {
     return (principal * apr * durationSeconds) / (yearSeconds * bpsDenominator);
   }
 
+  function parsedEventNames(receipt: any, contractInterface: any) {
+    return receipt.logs
+      .map((log: any) => {
+        try {
+          return contractInterface.parseLog(log)?.name;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((name: string | undefined) => name !== undefined);
+  }
+
   async function deploySavingCoreFixture() {
     const [deployer, feeReceiver, user, other, bot] = await ethers.getSigners();
 
@@ -233,6 +245,8 @@ describe("SavingCore", function () {
       await savingCore.connect(user).withdrawAtMaturity(0);
 
       expect((await savingCore.deposits(0)).status).to.equal(2n);
+      expect(await savingCore.unpaidInterest(0)).to.equal(0n);
+      expect(await savingCore.interestClaimant(0)).to.equal(ethers.ZeroAddress);
       expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore + depositAmount + interest);
       expect(await mockUSDC.balanceOf(savingCoreAddress)).to.equal(coreBefore - depositAmount);
       expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore - interest);
@@ -257,6 +271,108 @@ describe("SavingCore", function () {
       expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore + depositAmount);
       expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore);
       await expectCustomError(savingCore.connect(user).withdrawAtMaturity.staticCall(0), savingCore.interface, "DepositNotActive");
+    });
+
+    it("previews whether a matured deposit's interest can currently be paid", async function () {
+      const { vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      const deposit = await savingCore.deposits(0);
+      const interest = calculateInterest(deposit.principal, deposit.aprBpsAtOpen, deposit.maturityAt - deposit.startAt);
+
+      let preview = await savingCore.previewMaturitySettlement(0);
+      expect(preview.principal).to.equal(depositAmount);
+      expect(preview.interest).to.equal(interest);
+      expect(preview.canPayInterest).to.equal(true);
+
+      await vaultManager.withdrawVault(vaultFunds);
+
+      preview = await savingCore.previewMaturitySettlement(0);
+      expect(preview.principal).to.equal(depositAmount);
+      expect(preview.interest).to.equal(interest);
+      expect(preview.canPayInterest).to.equal(false);
+      await expectCustomError(savingCore.previewMaturitySettlement.staticCall(99), savingCore.interface, "DepositNotFound");
+    });
+
+    it("pays principal and records unpaid interest when the vault is empty at maturity", async function () {
+      const { user, mockUSDC, vaultManager, vaultAddress, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      const deposit = await savingCore.deposits(0);
+      const interest = calculateInterest(deposit.principal, deposit.aprBpsAtOpen, deposit.maturityAt - deposit.startAt);
+      await vaultManager.withdrawVault(vaultFunds);
+      await time.increase(Number(tenorSeconds));
+
+      const userBefore = await mockUSDC.balanceOf(user.address);
+      const coreBefore = await mockUSDC.balanceOf(savingCoreAddress);
+
+      const tx = await savingCore.connect(user).withdrawAtMaturity(0);
+      const receipt = await tx.wait();
+      const eventNames = parsedEventNames(receipt, savingCore.interface);
+      expect(eventNames).to.include("InterestDeferred");
+      expect(eventNames).to.include("Withdrawn");
+
+      expect((await savingCore.deposits(0)).status).to.equal(2n);
+      expect(await savingCore.unpaidInterest(0)).to.equal(interest);
+      expect(await savingCore.interestClaimant(0)).to.equal(user.address);
+      expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore + depositAmount);
+      expect(await mockUSDC.balanceOf(savingCoreAddress)).to.equal(coreBefore - depositAmount);
+      expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(0n);
+      await expectCustomError(savingCore.ownerOf.staticCall(0), savingCore.interface, "ERC721NonexistentToken");
+    });
+
+    it("records unpaid interest instead of silently paying principal only when the vault is underfunded", async function () {
+      const { user, mockUSDC, vaultManager, vaultAddress, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      const deposit = await savingCore.deposits(0);
+      const interest = calculateInterest(deposit.principal, deposit.aprBpsAtOpen, deposit.maturityAt - deposit.startAt);
+      await vaultManager.withdrawVault(vaultFunds);
+      await mockUSDC.approve(vaultAddress, interest - 1n);
+      await vaultManager.fundVault(interest - 1n);
+      await time.increase(Number(tenorSeconds));
+
+      await savingCore.connect(user).withdrawAtMaturity(0);
+
+      expect(await savingCore.unpaidInterest(0)).to.equal(interest);
+      expect(await savingCore.interestClaimant(0)).to.equal(user.address);
+      expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(interest - 1n);
+    });
+
+    it("lets the recorded claimant claim deferred interest after the vault is funded", async function () {
+      const { user, other, mockUSDC, vaultManager, vaultAddress, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      const deposit = await savingCore.deposits(0);
+      const interest = calculateInterest(deposit.principal, deposit.aprBpsAtOpen, deposit.maturityAt - deposit.startAt);
+      await vaultManager.withdrawVault(vaultFunds);
+      await time.increase(Number(tenorSeconds));
+      await savingCore.connect(user).withdrawAtMaturity(0);
+
+      await expectCustomError(savingCore.connect(other).claimInterest.staticCall(0), savingCore.interface, "NotInterestClaimant");
+      await expectCustomError(savingCore.connect(user).claimInterest.staticCall(0), savingCore.interface, "InterestUnavailable");
+
+      await mockUSDC.approve(vaultAddress, interest);
+      await vaultManager.fundVault(interest);
+      const userBefore = await mockUSDC.balanceOf(user.address);
+
+      const tx = await savingCore.connect(user).claimInterest(0);
+      const receipt = await tx.wait();
+      expect(parsedEventNames(receipt, savingCore.interface)).to.include("InterestClaimed");
+
+      expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore + interest);
+      expect(await savingCore.unpaidInterest(0)).to.equal(0n);
+      expect(await savingCore.interestClaimant(0)).to.equal(ethers.ZeroAddress);
+      await expectCustomError(savingCore.connect(user).claimInterest.staticCall(0), savingCore.interface, "NoUnpaidInterest");
+    });
+
+    it("stores the transferred NFT owner as the deferred-interest claimant", async function () {
+      const { user, other, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
+      await vaultManager.withdrawVault(vaultFunds);
+      await time.increase(Number(tenorSeconds));
+
+      await savingCore.connect(other).withdrawAtMaturity(0);
+
+      expect(await savingCore.interestClaimant(0)).to.equal(other.address);
+      await expectCustomError(savingCore.connect(user).claimInterest.staticCall(0), savingCore.interface, "NotInterestClaimant");
     });
 
     it("lets the transferred deposit NFT owner withdraw at maturity", async function () {
@@ -404,6 +520,44 @@ describe("SavingCore", function () {
       expect(await savingCore.ownerOf(1)).to.equal(other.address);
     });
 
+    it("blocks manual renewal for a deposit when the vault cannot pay the interest to compound", async function () {
+      const { user, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await vaultManager.withdrawVault(vaultFunds);
+      await time.increase(Number(tenorSeconds));
+
+      await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "InterestUnavailable");
+      expect((await savingCore.deposits(0)).status).to.equal(1n);
+    });
+
+    it("does not globally block another deposit's solvent manual renewal", async function () {
+      const { user, mockUSDC, vaultManager, vaultAddress, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
+      const smallDeposit = minDeposit;
+      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount + smallDeposit);
+      await savingCore.connect(user).openDeposit(0, depositAmount);
+      await savingCore.connect(user).openDeposit(0, smallDeposit);
+
+      const large = await savingCore.deposits(0);
+      const small = await savingCore.deposits(1);
+      const largeInterest = calculateInterest(large.principal, large.aprBpsAtOpen, large.maturityAt - large.startAt);
+      const smallInterest = calculateInterest(small.principal, small.aprBpsAtOpen, small.maturityAt - small.startAt);
+      expect(largeInterest > smallInterest).to.equal(true);
+
+      await vaultManager.withdrawVault(vaultFunds);
+      await mockUSDC.approve(vaultAddress, smallInterest);
+      await vaultManager.fundVault(smallInterest);
+      await time.increase(Number(tenorSeconds));
+
+      await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "InterestUnavailable");
+      await savingCore.connect(user).renewDeposit(1, 1);
+
+      expect((await savingCore.deposits(0)).status).to.equal(1n);
+      expect((await savingCore.deposits(1)).status).to.equal(4n);
+      expect((await savingCore.deposits(2)).principal).to.equal(smallDeposit + smallInterest);
+    });
+
     it("auto-renews permissionlessly after the 3-day grace period and preserves original economics", async function () {
       const { user, bot, mockUSDC, vaultAddress, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
@@ -433,6 +587,16 @@ describe("SavingCore", function () {
       expect(newDeposit.penaltyBpsAtOpen).to.equal(penaltyBps);
       expect(await mockUSDC.balanceOf(savingCoreAddress)).to.equal(coreBefore + interest);
       expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore - interest);
+    });
+
+    it("blocks auto-renewal for a deposit when the vault cannot pay the interest to compound", async function () {
+      const { bot, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await vaultManager.withdrawVault(vaultFunds);
+      await time.increase(Number(tenorSeconds + autoRenewGracePeriod));
+
+      await expectCustomError(savingCore.connect(bot).autoRenewDeposit.staticCall(0), savingCore.interface, "InterestUnavailable");
+      expect((await savingCore.deposits(0)).status).to.equal(1n);
     });
 
     it("handles zero-interest manual and auto renewals without touching the vault", async function () {

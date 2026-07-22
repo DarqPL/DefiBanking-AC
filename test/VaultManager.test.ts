@@ -117,6 +117,9 @@ describe("VaultManager", function () {
 
     expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(amount);
     expect(await mockUSDC.balanceOf(deployer.address)).to.equal(ownerBalanceBefore - amount);
+    expect(await vaultManager.vaultBalance()).to.equal(amount);
+    expect(await vaultManager.canPayInterest(amount)).to.equal(true);
+    expect(await vaultManager.canPayInterest(amount + 1n)).to.equal(false);
   });
 
   it("lets the owner withdraw vault liquidity", async function () {

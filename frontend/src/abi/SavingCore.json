@@ -160,6 +160,11 @@
     },
     {
         "inputs": [],
+        "name": "InterestUnavailable",
+        "type": "error"
+    },
+    {
+        "inputs": [],
         "name": "InvalidAddress",
         "type": "error"
     },
@@ -200,7 +205,17 @@
     },
     {
         "inputs": [],
+        "name": "NoUnpaidInterest",
+        "type": "error"
+    },
+    {
+        "inputs": [],
         "name": "NotDepositOwner",
+        "type": "error"
+    },
+    {
+        "inputs": [],
+        "name": "NotInterestClaimant",
         "type": "error"
     },
     {
@@ -364,6 +379,56 @@
             }
         ],
         "name": "DepositOpened",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            },
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "claimant",
+                "type": "address"
+            },
+            {
+                "indexed": false,
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "name": "InterestClaimed",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            },
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "claimant",
+                "type": "address"
+            },
+            {
+                "indexed": false,
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "name": "InterestDeferred",
         "type": "event"
     },
     {
@@ -712,6 +777,19 @@
     {
         "inputs": [
             {
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            }
+        ],
+        "name": "claimInterest",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
                 "internalType": "uint64",
                 "name": "tenorDays",
                 "type": "uint64"
@@ -863,6 +941,25 @@
     {
         "inputs": [
             {
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            }
+        ],
+        "name": "interestClaimant",
+        "outputs": [
+            {
+                "internalType": "address",
+                "name": "claimant",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
                 "internalType": "address",
                 "name": "owner",
                 "type": "address"
@@ -987,6 +1084,35 @@
             {
                 "internalType": "bool",
                 "name": "",
+                "type": "bool"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            }
+        ],
+        "name": "previewMaturitySettlement",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "principal",
+                "type": "uint256"
+            },
+            {
+                "internalType": "uint256",
+                "name": "interest",
+                "type": "uint256"
+            },
+            {
+                "internalType": "bool",
+                "name": "canPayInterest",
                 "type": "bool"
             }
         ],
@@ -1229,6 +1355,25 @@
         "name": "transferOwnership",
         "outputs": [],
         "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            }
+        ],
+        "name": "unpaidInterest",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
         "type": "function"
     },
     {

@@ -18,6 +18,13 @@ interface IVaultManager {
     function feeReceiver() external view returns (address);
 
     /**
+     * @notice Returns whether the vault currently has enough liquidity to pay an interest amount.
+     * @param amount Interest amount to check.
+     * @return canPay Whether the vault balance is at least `amount`.
+     */
+    function canPayInterest(uint256 amount) external view returns (bool canPay);
+
+    /**
      * @notice Pays interest from the vault to a depositor.
      * @param to Recipient of the interest payment.
      * @param amount Amount of interest to pay.
@@ -111,6 +118,12 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @notice Deposit position metadata by future ERC721 token id.
     mapping(uint256 depositId => DepositInfo info) public deposits;
 
+    /// @notice Unpaid maturity interest by closed deposit id when the vault could not pay immediately.
+    mapping(uint256 depositId => uint256 amount) public unpaidInterest;
+
+    /// @notice Account allowed to claim deferred interest after the deposit NFT is burned.
+    mapping(uint256 depositId => address claimant) public interestClaimant;
+
     /// @dev Reverts when a tenor value is zero.
     error InvalidTenor();
 
@@ -170,6 +183,15 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /// @dev Reverts when compounded renewal principal does not fit the target plan limits.
     error NewPrincipalOutOfRange();
+
+    /// @dev Reverts when a caller is not the stored deferred-interest claimant.
+    error NotInterestClaimant();
+
+    /// @dev Reverts when a deposit has no unpaid interest to claim.
+    error NoUnpaidInterest();
+
+    /// @dev Reverts when a renewal needs interest liquidity that the vault cannot currently pay.
+    error InterestUnavailable();
 
     /**
      * @notice Emitted when a saving plan is created.
@@ -238,6 +260,22 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 penalty,
         bool isEarly
     );
+
+    /**
+     * @notice Emitted when maturity interest could not be paid and was recorded as a later claim.
+     * @param depositId Closed deposit id with deferred interest.
+     * @param claimant Account allowed to claim the deferred interest.
+     * @param amount Interest amount recorded for later payment.
+     */
+    event InterestDeferred(uint256 indexed depositId, address indexed claimant, uint256 amount);
+
+    /**
+     * @notice Emitted when deferred maturity interest is claimed from the vault.
+     * @param depositId Closed deposit id whose deferred interest was claimed.
+     * @param claimant Account that received the interest.
+     * @param amount Interest amount paid from VaultManager.
+     */
+    event InterestClaimed(uint256 indexed depositId, address indexed claimant, uint256 amount);
 
     /**
      * @notice Emitted when an active matured deposit is renewed into a new deposit NFT.
@@ -391,27 +429,55 @@ contract SavingCore is ERC721, Ownable, Pausable {
     }
 
     /**
-     * @notice Withdraws a matured deposit, returning principal and paying interest.
-     * @dev Principal is paid by this contract; interest is paid by VaultManager.
+     * @notice Withdraws a matured deposit, always returning principal and paying interest when vault liquidity allows.
+     * @dev If VaultManager cannot pay the full interest, the unpaid interest is recorded as a later claim.
      * @param depositId ERC721 token id representing the deposit position.
      */
     function withdrawAtMaturity(uint256 depositId) external whenNotPaused {
         DepositInfo storage deposit = _getActiveDeposit(depositId);
-        if (ownerOf(depositId) != msg.sender) revert NotDepositOwner();
+        address account = msg.sender;
+        if (ownerOf(depositId) != account) revert NotDepositOwner();
         if (block.timestamp < deposit.maturityAt) revert NotMatured();
 
         uint256 principal = deposit.principal;
         uint256 interest = _calculateInterest(deposit);
+        uint256 paidInterest;
 
         deposit.status = DepositStatus.Withdrawn;
         _burn(depositId);
 
-        emit Withdrawn(depositId, msg.sender, principal, interest, 0, false);
-
-        token.safeTransfer(msg.sender, principal);
+        token.safeTransfer(account, principal);
         if (interest != 0) {
-            vaultManager.payInterest(msg.sender, interest);
+            try vaultManager.payInterest(account, interest) {
+                paidInterest = interest;
+            } catch {
+                unpaidInterest[depositId] = interest;
+                interestClaimant[depositId] = account;
+                emit InterestDeferred(depositId, account, interest);
+            }
         }
+
+        emit Withdrawn(depositId, account, principal, paidInterest, 0, false);
+    }
+
+    /**
+     * @notice Claims deferred maturity interest after the vault has enough liquidity.
+     * @param depositId Closed deposit id with recorded unpaid interest.
+     */
+    function claimInterest(uint256 depositId) external whenNotPaused {
+        uint256 amount = unpaidInterest[depositId];
+        if (amount == 0) revert NoUnpaidInterest();
+
+        address claimant = interestClaimant[depositId];
+        if (claimant != msg.sender) revert NotInterestClaimant();
+        if (!vaultManager.canPayInterest(amount)) revert InterestUnavailable();
+
+        unpaidInterest[depositId] = 0;
+        delete interestClaimant[depositId];
+
+        emit InterestClaimed(depositId, msg.sender, amount);
+
+        vaultManager.payInterest(msg.sender, amount);
     }
 
     /**
@@ -458,6 +524,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
         uint256 oldPrincipal = oldDeposit.principal;
         uint256 interest = _calculateInterest(oldDeposit);
+        if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
         uint256 newPrincipal = oldPrincipal + interest;
         if (
             (newPlan.minDeposit != 0 && newPrincipal < newPlan.minDeposit)
@@ -508,6 +575,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         address account = ownerOf(depositId);
         uint256 oldPrincipal = oldDeposit.principal;
         uint256 interest = _calculateInterest(oldDeposit);
+        if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
         uint256 newPrincipal = oldPrincipal + interest;
         uint256 tenorSeconds = uint256(oldDeposit.maturityAt) - oldDeposit.startAt;
 
@@ -559,6 +627,24 @@ contract SavingCore is ERC721, Ownable, Pausable {
      */
     function unpause() external onlyOwner {
         _unpause();
+    }
+
+    /**
+     * @notice Previews the principal, interest, and current vault funding status for an active deposit.
+     * @param depositId Deposit NFT id to preview.
+     * @return principal Principal that will be returned at maturity.
+     * @return interest Interest owed for the term.
+     * @return canPayInterest Whether the vault can currently pay the full interest amount.
+     */
+    function previewMaturitySettlement(uint256 depositId)
+        external
+        view
+        returns (uint256 principal, uint256 interest, bool canPayInterest)
+    {
+        DepositInfo storage deposit = _getActiveDeposit(depositId);
+        principal = deposit.principal;
+        interest = _calculateInterest(deposit);
+        canPayInterest = interest == 0 || vaultManager.canPayInterest(interest);
     }
 
     /**

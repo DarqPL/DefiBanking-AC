@@ -1,5 +1,24 @@
 [
     {
+        "inputs": [
+            {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "name": "canPayInterest",
+        "outputs": [
+            {
+                "internalType": "bool",
+                "name": "canPay",
+                "type": "bool"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
         "inputs": [],
         "name": "feeReceiver",
         "outputs": [
