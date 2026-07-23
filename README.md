@@ -241,8 +241,7 @@ Required or supported environment variables are documented in `.env_example`:
 - `ETHERSCAN_API` for verification.
 - `REPORT_GAS` for gas reporting.
 - `BOT_PRIVATE_KEY` for the auto-renew bot wallet.
-- `CRON_SECRET` for the protected auto-renew API endpoint.
-- `MARKETPLACE_ADDRESS` for the protected marketplace cleanup API endpoint.
+- `CRON_SECRET` for the protected bot API endpoints.
 - Optional `SEPOLIA_RPC_URL` and `MAINNET_RPC_URL` overrides.
 
 Do not commit real `.env` files or private keys.
@@ -300,7 +299,7 @@ This project includes:
 - `.github/workflows/auto-renew-bot.yml`: scheduled GitHub Actions fallback.
 - `docs/AUTO_RENEW_BOT_SETUP.md`: setup notes for Vercel and cron-job.org.
 
-The marketplace cleanup endpoint is `api/marketplace-cleanup.ts`. It scans all current listing IDs off-chain with `isListingStale(depositId)`. If no stale listing exists, it returns `mode: "skip"` and sends no transaction. If stale listings exist, it calls `DepositMarketplace.cleanListings(staleDepositIds)` from a bot wallet. It is intended to be triggered by cron-job.org or another scheduler.
+The marketplace cleanup endpoint is `api/marketplace-cleanup.ts`. It reads the marketplace address from `deployments/sepolia/DepositMarketplace.json`, scans all current listing IDs off-chain with `isListingStale(depositId)`, and only sends a transaction when stale listings exist. If no stale listing exists, it returns `mode: "skip"`. If stale listings exist, it calls `DepositMarketplace.cleanListings(staleDepositIds)` from a bot wallet. It is intended to be triggered by cron-job.org or another scheduler.
 
 The Vercel endpoint should be called periodically with a `CRON_SECRET`. It scans active deposits, skips deposits whose original plan is disabled, and calls `autoRenewDeposit` for enabled-plan deposits that reached `maturityAt + 3 days`.
 

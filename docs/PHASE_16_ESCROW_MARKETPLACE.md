@@ -152,12 +152,13 @@ Required Vercel environment variables:
 
 - `BOT_PRIVATE_KEY`: Sepolia bot wallet private key for gas.
 - `CRON_SECRET`: Shared secret used to protect the endpoint.
-- `MARKETPLACE_ADDRESS`: Deployed `DepositMarketplace` address.
 
 Optional environment variables:
 
 - `SEPOLIA_RPC_URL`: Custom Sepolia RPC URL.
 - `MARKETPLACE_CLEANUP_MAX_LISTINGS`: Default maximum listings to scan per call.
+
+The endpoint reads the deployed marketplace address from `deployments/sepolia/DepositMarketplace.json`, so redeploying with `hardhat-deploy` updates the bot target without changing Vercel environment variables.
 
 Manual dry-run URL:
 
@@ -215,9 +216,8 @@ Add `test/DepositMarketplace.test.ts` covering:
 3. Add deploy script after `SavingCore` deployment.
 4. Run `npm.cmd run compile` to regenerate ABI exports and TypeChain.
 5. Copy generated marketplace ABI into `frontend/src/abi/` if the frontend imports static ABIs.
-6. Add `MARKETPLACE_ADDRESS` to frontend config after Sepolia deployment.
-7. Configure Vercel `MARKETPLACE_ADDRESS` and redeploy.
-8. Configure cron-job.org to call `/api/marketplace-cleanup` every 15 minutes.
+6. Commit or deploy with the updated `deployments/sepolia/DepositMarketplace.json` artifact so the frontend and cleanup API read the new address.
+7. Configure cron-job.org to call `/api/marketplace-cleanup` every 15 minutes.
 
 ## Current Progress: Phase 16 Question 1
 
@@ -259,8 +259,7 @@ npx.cmd hardhat deploy --network sepolia
 
 After Sepolia deployment:
 
-- Set Vercel `MARKETPLACE_ADDRESS` to the deployed `DepositMarketplace` address.
-- Update frontend config with the deployed marketplace address during the frontend marketplace phase.
+- Keep `deployments/sepolia/DepositMarketplace.json` updated with the deployed `DepositMarketplace` address.
 - Configure cron-job.org to call `/api/marketplace-cleanup` every 15 minutes.
 
 Latest verification:

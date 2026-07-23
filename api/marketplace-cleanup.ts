@@ -1,4 +1,5 @@
 import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import depositMarketplaceDeployment from "../deployments/sepolia/DepositMarketplace.json";
 
 const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
 const DEFAULT_MAX_LISTINGS = 50n;
@@ -72,10 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: "BOT_PRIVATE_KEY is not configured" });
   }
 
-  const marketplaceAddress = process.env.MARKETPLACE_ADDRESS;
-  if (!marketplaceAddress) {
-    return res.status(500).json({ error: "MARKETPLACE_ADDRESS is not configured" });
-  }
+  const marketplaceAddress = depositMarketplaceDeployment.address;
 
   let maxListings: bigint;
   try {
