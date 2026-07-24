@@ -322,6 +322,28 @@ contract SavingCore is ERC721, Ownable, Pausable {
     );
 
     /**
+     * @notice Emitted when a user withdraws matured interest while renewing only the original principal.
+     * @param oldDepositId Previous deposit NFT id that remains as historical proof.
+     * @param newDepositId Newly minted deposit NFT id.
+     * @param account Owner receiving the renewed deposit NFT and interest payment.
+     * @param newPlanId Plan id used for the new deposit.
+     * @param principal Principal carried into the new deposit.
+     * @param interest Interest paid out to the user from VaultManager.
+     * @param startAt Timestamp when the renewed deposit starts.
+     * @param maturityAt Timestamp when the renewed deposit reaches maturity.
+     */
+    event InterestWithdrawnAndRenewed(
+        uint256 indexed oldDepositId,
+        uint256 indexed newDepositId,
+        address indexed account,
+        uint256 newPlanId,
+        uint256 principal,
+        uint256 interest,
+        uint64 startAt,
+        uint64 maturityAt
+    );
+
+    /**
      * @notice Emitted when the authorized deposit marketplace is updated.
      * @param oldMarketplace Previous marketplace address.
      * @param newMarketplace New marketplace address.
@@ -569,10 +591,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 interest = _calculateInterest(oldPrincipal, oldDeposit.aprBpsAtOpen, uint256(oldMaturityAt) - oldStartAt);
         if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
         uint256 newPrincipal = oldPrincipal + interest;
-        if (
-            (newPlan.minDeposit != 0 && newPrincipal < newPlan.minDeposit)
-                || (newPlan.maxDeposit != 0 && newPrincipal > newPlan.maxDeposit)
-        ) revert NewPrincipalOutOfRange();
+        _validateRenewedPrincipal(newPlan, newPrincipal);
 
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
 
@@ -629,6 +648,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 interest = _calculateInterest(oldPrincipal, aprBpsAtOpen, tenorSeconds);
         if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
         uint256 newPrincipal = oldPrincipal + interest;
+        _validateRenewedPrincipal(originalPlan, newPrincipal);
 
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(tenorSeconds);
 
@@ -658,6 +678,47 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
         if (interest != 0) {
             vaultManager.payInterest(address(this), interest);
+        }
+    }
+
+    /**
+     * @notice Withdraws matured interest to the owner and renews only the existing principal into a new plan.
+     * @dev Reverts if the vault cannot pay the full interest, because this action promises an interest payout.
+     * @param depositId ERC721 token id representing the matured deposit position.
+     * @param newPlanId Enabled saving plan id for the renewed principal-only deposit.
+     */
+    function withdrawInterestAndRenewPrincipal(uint256 depositId, uint256 newPlanId) external whenNotPaused {
+        DepositInfo storage oldDeposit = _getActiveDeposit(depositId);
+        address account = ownerOf(depositId);
+        if (account != msg.sender) revert NotDepositOwner();
+        uint64 oldMaturityAt = oldDeposit.maturityAt;
+        if (block.timestamp < oldMaturityAt) revert NotMatured();
+
+        SavingPlan storage newPlan = _getExistingPlan(newPlanId);
+        if (!newPlan.enabled) revert PlanNotEnabled();
+
+        uint256 principal = oldDeposit.principal;
+        uint256 interest = _calculateInterest(principal, oldDeposit.aprBpsAtOpen, uint256(oldMaturityAt) - oldDeposit.startAt);
+        if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
+        _validateRenewedPrincipal(newPlan, principal);
+
+        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
+
+        oldDeposit.status = DepositStatus.ManualRenewed;
+        uint256 newDepositId = _storeAndMintDeposit(
+            account,
+            newPlanId,
+            principal,
+            startAt,
+            maturityAt,
+            newPlan.aprBps,
+            newPlan.earlyWithdrawPenaltyBps
+        );
+
+        emit InterestWithdrawnAndRenewed(depositId, newDepositId, account, newPlanId, principal, interest, startAt, maturityAt);
+
+        if (interest != 0) {
+            vaultManager.payInterest(account, interest);
         }
     }
 
@@ -875,6 +936,20 @@ contract SavingCore is ERC721, Ownable, Pausable {
      */
     function _calculateInterest(uint256 principal, uint16 aprBps, uint256 tenorSeconds) private pure returns (uint256 interest) {
         interest = (principal * aprBps * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
+    }
+
+    /**
+     * @dev Reverts when a renewed principal does not fit the selected plan limits.
+     */
+    function _validateRenewedPrincipal(SavingPlan storage plan, uint256 principal) private view {
+        if (!_isRenewedPrincipalInRange(plan, principal)) revert NewPrincipalOutOfRange();
+    }
+
+    /**
+     * @dev Returns whether a renewed principal fits the selected plan limits.
+     */
+    function _isRenewedPrincipalInRange(SavingPlan storage plan, uint256 principal) private view returns (bool) {
+        return (plan.minDeposit == 0 || principal >= plan.minDeposit) && (plan.maxDeposit == 0 || principal <= plan.maxDeposit);
     }
 
     /**

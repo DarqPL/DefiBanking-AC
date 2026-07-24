@@ -2,6 +2,8 @@ import { deployments, ethers, network } from "hardhat";
 import { Wallet } from "ethers";
 
 const DEPOSIT_STATUS_ACTIVE = 1;
+const BPS_DENOMINATOR = 10_000n;
+const YEAR_SECONDS = 365n * 24n * 60n * 60n;
 
 async function main() {
   if (network.name !== "sepolia") {
@@ -30,16 +32,30 @@ async function main() {
   let eligible = 0;
   let renewed = 0;
   let failed = 0;
-  const planEnabledCache = new Map<string, boolean>();
+  let skippedOutOfRange = 0;
+  const planCache = new Map<string, { minDeposit: bigint; maxDeposit: bigint; enabled: boolean }>();
 
-  async function isPlanEnabled(planId: bigint): Promise<boolean> {
+  async function getPlan(planId: bigint): Promise<{ minDeposit: bigint; maxDeposit: bigint; enabled: boolean }> {
     const key = planId.toString();
-    const cached = planEnabledCache.get(key);
+    const cached = planCache.get(key);
     if (cached !== undefined) return cached;
 
     const plan = await savingCore.savingPlans(planId);
-    planEnabledCache.set(key, plan.enabled);
-    return plan.enabled;
+    const normalized = {
+      minDeposit: plan.minDeposit,
+      maxDeposit: plan.maxDeposit,
+      enabled: plan.enabled,
+    };
+    planCache.set(key, normalized);
+    return normalized;
+  }
+
+  function calculateInterest(principal: bigint, aprBps: bigint, tenorSeconds: bigint) {
+    return (principal * aprBps * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
+  }
+
+  function isInRange(plan: { minDeposit: bigint; maxDeposit: bigint }, amount: bigint) {
+    return (plan.minDeposit === 0n || amount >= plan.minDeposit) && (plan.maxDeposit === 0n || amount <= plan.maxDeposit);
   }
 
   console.log(`Auto-renew bot running on ${network.name}`);
@@ -53,10 +69,23 @@ async function main() {
 
     const deposit = await savingCore.deposits(depositId);
     if (Number(deposit.status) !== DEPOSIT_STATUS_ACTIVE) continue;
-    if (!(await isPlanEnabled(deposit.planId))) continue;
+    const plan = await getPlan(deposit.planId);
+    if (!plan.enabled) continue;
 
     const renewAfter = BigInt(deposit.maturityAt) + gracePeriod;
     if (now < renewAfter) continue;
+
+    const principal = deposit.principal;
+    const tenorSeconds = BigInt(deposit.maturityAt) - BigInt(deposit.startAt);
+    const interest = calculateInterest(principal, BigInt(deposit.aprBpsAtOpen), tenorSeconds);
+    const newPrincipal = principal + interest;
+    if (!isInRange(plan, newPrincipal)) {
+      skippedOutOfRange += 1;
+      console.log(
+        `Skipping deposit ${depositId.toString()}: compounded principal ${newPrincipal.toString()} is outside plan range`,
+      );
+      continue;
+    }
 
     eligible += 1;
 
@@ -82,6 +111,7 @@ async function main() {
   console.log(`Eligible deposits: ${eligible}`);
   console.log(`Renewed deposits: ${renewed}`);
   console.log(`Failed renewals: ${failed}`);
+  console.log(`Skipped out of range: ${skippedOutOfRange}`);
 }
 
 main().catch((error) => {

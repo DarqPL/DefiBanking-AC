@@ -3,6 +3,8 @@ import savingCoreDeployment from "../deployments/sepolia/SavingCore.json";
 
 const DEPOSIT_STATUS_ACTIVE = 1;
 const DEFAULT_SEPOLIA_RPC_URL = "https://ethereum-sepolia-rpc.publicnode.com";
+const BPS_DENOMINATOR = 10_000n;
+const YEAR_SECONDS = 365n * 24n * 60n * 60n;
 
 type VercelRequest = {
   method?: string;
@@ -74,16 +76,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let eligible = 0;
   let renewed = 0;
   let failed = 0;
-  const planEnabledCache = new Map<string, boolean>();
+  let skippedOutOfRange = 0;
+  const planCache = new Map<string, { minDeposit: bigint; maxDeposit: bigint; enabled: boolean }>();
 
-  async function isPlanEnabled(planId: bigint): Promise<boolean> {
+  async function getPlan(planId: bigint): Promise<{ minDeposit: bigint; maxDeposit: bigint; enabled: boolean }> {
     const key = planId.toString();
-    const cached = planEnabledCache.get(key);
+    const cached = planCache.get(key);
     if (cached !== undefined) return cached;
 
     const plan = await savingCore.savingPlans(planId);
-    planEnabledCache.set(key, plan.enabled);
-    return plan.enabled;
+    const normalized = {
+      minDeposit: BigInt(plan.minDeposit),
+      maxDeposit: BigInt(plan.maxDeposit),
+      enabled: plan.enabled,
+    };
+    planCache.set(key, normalized);
+    return normalized;
+  }
+
+  function calculateInterest(principal: bigint, aprBps: bigint, tenorSeconds: bigint) {
+    return (principal * aprBps * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
+  }
+
+  function isInRange(plan: { minDeposit: bigint; maxDeposit: bigint }, amount: bigint) {
+    return (plan.minDeposit === 0n || amount >= plan.minDeposit) && (plan.maxDeposit === 0n || amount <= plan.maxDeposit);
   }
 
   for (let depositId = 0n; depositId < nextDepositId; depositId++) {
@@ -91,10 +107,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const deposit = await savingCore.deposits(depositId);
     if (Number(deposit.status) !== DEPOSIT_STATUS_ACTIVE) continue;
-    if (!(await isPlanEnabled(deposit.planId))) continue;
+    const plan = await getPlan(deposit.planId);
+    if (!plan.enabled) continue;
 
     const renewAfter = BigInt(deposit.maturityAt) + gracePeriod;
     if (now < renewAfter) continue;
+
+    const principal = BigInt(deposit.principal);
+    const tenorSeconds = BigInt(deposit.maturityAt) - BigInt(deposit.startAt);
+    const interest = calculateInterest(principal, BigInt(deposit.aprBpsAtOpen), tenorSeconds);
+    const newPrincipal = principal + interest;
+    if (!isInRange(plan, newPrincipal)) {
+      skippedOutOfRange += 1;
+      results.push({
+        depositId: depositId.toString(),
+        status: "skipped-new-principal-out-of-range",
+        principal: principal.toString(),
+        interest: interest.toString(),
+        newPrincipal: newPrincipal.toString(),
+        planMinDeposit: plan.minDeposit.toString(),
+        planMaxDeposit: plan.maxDeposit.toString(),
+      });
+      continue;
+    }
 
     eligible += 1;
 
@@ -125,6 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     eligible,
     renewed,
     failed,
+    skippedOutOfRange,
     results,
   });
 }

@@ -110,6 +110,7 @@ For each request, the endpoint:
 - Reads each active deposit's original plan status with a per-run cache.
 - Skips deposits whose original plan is disabled, so the bot does not waste gas on renewals the contract will reject.
 - Checks `block.timestamp >= maturityAt + AUTO_RENEW_GRACE_PERIOD`.
+- Calculates `principal + interest` and skips deposits whose compounded principal is outside the original plan's min/max limits, so a permanent max-limit breach does not consume gas in later runs.
 - Calls `autoRenewDeposit(depositId)` for eligible deposits.
 - Continues scanning even if one renewal fails.
 - Returns a JSON summary with checked, eligible, renewed, and failed counts.
@@ -137,3 +138,9 @@ Manual renew and auto-renew intentionally use different APR rules:
 
 This matches the assignment rule that auto-renew protects the user from an admin lowering the APR before the bot renews the deposit.
 If the admin disables the original plan, both the bot and contract block auto-renew because disabling a plan closes it for future terms.
+
+## Plan Limit Rule
+
+Auto-renew compounds earned interest into the new principal. If the original plan has a maximum deposit and `principal + interest` exceeds that maximum, the contract rejects auto-renew with `NewPrincipalOutOfRange`.
+
+The bot pre-checks this deterministic condition before sending a transaction. Such deposits are returned as `skipped-new-principal-out-of-range` and remain active for the NFT owner to withdraw, manually renew into a suitable plan, or withdraw interest while continuing only the principal.

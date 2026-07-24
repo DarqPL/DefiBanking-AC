@@ -262,6 +262,37 @@ Manual renewal rules:
 - Manual renewal compounds interest into the new principal.
 - The renewed deposit uses the selected new plan's current APR and penalty.
 - If the vault cannot pay the interest, renewal reverts instead of creating a principal-only renewal.
+- If the compounded principal is outside the selected plan's min/max limits, renewal reverts with `NewPrincipalOutOfRange`.
+
+## Withdraw Interest And Continue Principal
+
+```mermaid
+flowchart TD
+    A[User calls withdrawInterestAndRenewPrincipal oldDepositId, newPlanId] --> B[Load active old deposit]
+    B --> C{caller owns NFT?}
+    C -->|No| C1[Revert NotDepositOwner]
+    C -->|Yes| D{old deposit matured?}
+    D -->|No| D1[Revert NotMatured]
+    D -->|Yes| E[Load new plan]
+    E --> F{new plan enabled?}
+    F -->|No| F1[Revert PlanNotEnabled]
+    F -->|Yes| G[Calculate old interest]
+    G --> H{Vault can pay interest?}
+    H -->|No| H1[Revert InterestUnavailable]
+    H -->|Yes| I{old principal inside new plan min/max?}
+    I -->|No| I1[Revert NewPrincipalOutOfRange]
+    I -->|Yes| J[Set old status = ManualRenewed]
+    J --> K[Store and mint new deposit NFT with old principal only]
+    K --> L[VaultManager.payInterest user]
+    L --> M[Emit InterestWithdrawnAndRenewed]
+```
+
+Interest-only renewal rules:
+
+- The user receives earned interest from `VaultManager` and keeps only the original principal in the new deposit.
+- This path is allowed when compounding would exceed a plan maximum, as long as the original principal fits the selected plan.
+- If the vault cannot pay the full interest, the function reverts with `InterestUnavailable` instead of silently renewing principal-only.
+- The user can still call `withdrawAtMaturity` to recover principal and record unpaid interest if the vault is underfunded.
 
 ## Auto Renewal
 
@@ -278,11 +309,13 @@ flowchart TD
     G --> H{Vault can pay interest?}
     H -->|No| H1[Revert InterestUnavailable]
     H -->|Yes| I[newPrincipal = oldPrincipal + interest]
-    I --> J[Preserve old tenor, planId, APR snapshot, penalty snapshot]
-    J --> K[Set old status = AutoRenewed]
-    K --> L[Store and mint new deposit NFT to NFT owner]
-    L --> M[VaultManager.payInterest SavingCore]
-    M --> N[Emit Renewed with isAuto = true]
+    I --> J{newPrincipal inside original plan min/max?}
+    J -->|No| J1[Revert NewPrincipalOutOfRange]
+    J -->|Yes| K[Preserve old tenor, planId, APR snapshot, penalty snapshot]
+    K --> L[Set old status = AutoRenewed]
+    L --> M[Store and mint new deposit NFT to NFT owner]
+    M --> N[VaultManager.payInterest SavingCore]
+    N --> O[Emit Renewed with isAuto = true]
 ```
 
 Auto-renew rules:
@@ -290,6 +323,7 @@ Auto-renew rules:
 - Auto-renew is permissionless; any account or bot can call it after the grace period.
 - The current grace period is `3 days` for student variant ending `71`.
 - Auto-renew preserves the old deposit's APR and penalty snapshots while the original plan remains enabled.
+- Auto-renew is rejected if compounding would put the new principal outside the original plan's min/max limits.
 - If the bot is offline, the deposit remains active and the user can still withdraw or manually renew.
 
 ## Auto-Renew Bot
@@ -307,12 +341,15 @@ flowchart TD
     I -->|No| H
     I -->|Yes| J{Grace period ended?}
     J -->|No| H
-    J -->|Yes| K[Call autoRenewDeposit]
-    K --> L[Record success or failure]
+    J -->|Yes| K{Compounded principal inside plan range?}
+    K -->|No| K1[Skip without transaction]
+    K -->|Yes| L[Call autoRenewDeposit]
+    L --> N[Record success or failure]
     H --> M{More deposits?}
-    L --> M
+    K1 --> M
+    N --> M
     M -->|Yes| F
-    M -->|No| N[Return JSON summary]
+    M -->|No| O[Return JSON summary]
 ```
 
 Operational notes:

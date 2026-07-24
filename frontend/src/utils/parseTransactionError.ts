@@ -13,7 +13,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   NotDepositOwner: 'Only the deposit NFT owner can perform this action.',
   DepositNotActive: 'This deposit is no longer active.',
   DepositNotFound: 'This deposit does not exist.',
-  NewPrincipalOutOfRange: 'Renewed principal is outside the target plan limits.',
+  NewPrincipalOutOfRange: 'Renewed principal is outside the target plan limits. Choose another plan or withdraw interest and continue principal only.',
   GracePeriodNotEnded: 'Auto-renewal is only available after the 3-day grace period.',
   EnforcedPause: 'This contract is currently paused.',
   ExpectedPause: 'This contract is not paused.',

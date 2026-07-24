@@ -737,6 +737,20 @@ describe("SavingCore", function () {
       expect((await savingCore.deposits(0)).status).to.equal(1n);
     });
 
+    it("blocks auto-renewal when compounded principal exceeds the original plan maximum", async function () {
+      const { user, bot, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
+      await savingCore.createPlan(tenorDays, aprBps, minDeposit, depositAmount, penaltyBps, true);
+      await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount);
+      await savingCore.connect(user).openDeposit(1, depositAmount);
+      await time.increase(Number(tenorSeconds + autoRenewGracePeriod));
+
+      await expectCustomError(savingCore.connect(bot).autoRenewDeposit.staticCall(0), savingCore.interface, "NewPrincipalOutOfRange");
+      expect((await savingCore.deposits(0)).status).to.equal(1n);
+
+      await savingCore.connect(user).withdrawAtMaturity(0);
+      expect((await savingCore.deposits(0)).status).to.equal(2n);
+    });
+
     it("blocks auto-renewal when the original plan is disabled but still allows maturity withdrawal", async function () {
       const { user, bot, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
@@ -773,6 +787,90 @@ describe("SavingCore", function () {
       expect((await savingCore.deposits(3)).principal).to.equal(depositAmount);
       expect(await mockUSDC.balanceOf(savingCoreAddress)).to.equal(autoCoreBefore);
       expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(autoVaultBefore);
+    });
+
+    it("withdraws interest and renews only principal when compounding would exceed the plan maximum", async function () {
+      const { user, mockUSDC, vaultAddress, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await savingCore.createPlan(365, 400, minDeposit, depositAmount, 300, true);
+      const oldDeposit = await savingCore.deposits(0);
+      const interest = calculateInterest(oldDeposit.principal, oldDeposit.aprBpsAtOpen, oldDeposit.maturityAt - oldDeposit.startAt);
+      await time.increase(Number(tenorSeconds));
+
+      await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "NewPrincipalOutOfRange");
+      const userBefore = await mockUSDC.balanceOf(user.address);
+      const coreBefore = await mockUSDC.balanceOf(savingCoreAddress);
+      const vaultBefore = await mockUSDC.balanceOf(vaultAddress);
+
+      const tx = await savingCore.connect(user).withdrawInterestAndRenewPrincipal(0, 1);
+      const receipt = await tx.wait();
+      expect(parsedEventNames(receipt, savingCore.interface)).to.include("InterestWithdrawnAndRenewed");
+
+      const renewedOldDeposit = await savingCore.deposits(0);
+      const newDeposit = await savingCore.deposits(1);
+      expect(renewedOldDeposit.status).to.equal(4n);
+      expect(await savingCore.ownerOf(0)).to.equal(user.address);
+      expect(await savingCore.ownerOf(1)).to.equal(user.address);
+      expect(newDeposit.planId).to.equal(1n);
+      expect(newDeposit.principal).to.equal(depositAmount);
+      expect(newDeposit.maturityAt - newDeposit.startAt).to.equal(365n * 24n * 60n * 60n);
+      expect(newDeposit.aprBpsAtOpen).to.equal(400n);
+      expect(newDeposit.penaltyBpsAtOpen).to.equal(300n);
+      expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore + interest);
+      expect(await mockUSDC.balanceOf(savingCoreAddress)).to.equal(coreBefore);
+      expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore - interest);
+    });
+
+    it("rejects interest-only renewal when vault liquidity or target plan rules do not allow it", async function () {
+      const { user, other, mockUSDC, vaultManager, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, true);
+      await expectCustomError(
+        savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 1),
+        savingCore.interface,
+        "NotMatured",
+      );
+
+      await time.increase(Number(tenorSeconds));
+      await expectCustomError(
+        savingCore.connect(other).withdrawInterestAndRenewPrincipal.staticCall(0, 1),
+        savingCore.interface,
+        "NotDepositOwner",
+      );
+
+      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, false);
+      await expectCustomError(
+        savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 2),
+        savingCore.interface,
+        "PlanNotEnabled",
+      );
+
+      await savingCore.createPlan(365, 400, depositAmount * 2n, maxDeposit, 300, true);
+      await expectCustomError(
+        savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 3),
+        savingCore.interface,
+        "NewPrincipalOutOfRange",
+      );
+
+      await vaultManager.withdrawVault(vaultFunds);
+      await expectCustomError(
+        savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 1),
+        savingCore.interface,
+        "InterestUnavailable",
+      );
+
+      await expectCustomError(
+        savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(99, 1),
+        savingCore.interface,
+        "DepositNotFound",
+      );
+
+      await savingCore.createPlan(tenorDays, 0, minDeposit, maxDeposit, penaltyBps, true);
+      await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount);
+      await savingCore.connect(user).openDeposit(4, depositAmount);
+      await time.increase(Number(tenorSeconds));
+      await savingCore.connect(user).withdrawInterestAndRenewPrincipal(1, 1);
+      expect((await savingCore.deposits(2)).principal).to.equal(depositAmount);
     });
   });
 

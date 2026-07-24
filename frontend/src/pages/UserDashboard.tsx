@@ -62,6 +62,11 @@ function calculateInterest(deposit: DepositInfo) {
   return (deposit.principal * deposit.aprBpsAtOpen * tenorSeconds) / (365n * 24n * 60n * 60n * 10_000n);
 }
 
+function isAmountInPlanRange(plan: SavingPlan | undefined, amount: bigint) {
+  if (!plan) return false;
+  return (plan.minDeposit === 0n || amount >= plan.minDeposit) && (plan.maxDeposit === 0n || amount <= plan.maxDeposit);
+}
+
 function normalizePlan(id: bigint, plan: unknown): SavingPlan {
   const values = plan as {
     minDeposit: bigint;
@@ -233,6 +238,7 @@ function DepositCard({
   onEarlyWithdraw,
   onWithdraw,
   onRenew,
+  onWithdrawInterestAndRenew,
   onClaimInterest,
   canManage = true,
 }: {
@@ -245,6 +251,7 @@ function DepositCard({
   onEarlyWithdraw: (depositId: bigint) => void;
   onWithdraw: (depositId: bigint) => void;
   onRenew: (depositId: bigint) => void;
+  onWithdrawInterestAndRenew: (depositId: bigint) => void;
   onClaimInterest: (depositId: bigint) => void;
   canManage?: boolean;
 }) {
@@ -253,6 +260,10 @@ function DepositCard({
   const maturityInterest = calculateInterest(deposit);
   const earlyPenalty = (deposit.principal * deposit.penaltyBpsAtOpen) / 10_000n;
   const earlyReceiveAmount = deposit.principal - earlyPenalty;
+  const selectedRenewPlan = plans.find((plan) => plan.id.toString() === renewPlanId);
+  const compoundedPrincipal = deposit.principal + maturityInterest;
+  const canCompoundRenew = deposit.canPayInterest && isAmountInPlanRange(selectedRenewPlan, compoundedPrincipal);
+  const canInterestOnlyRenew = deposit.canPayInterest && isAmountInPlanRange(selectedRenewPlan, deposit.principal);
 
   return (
     <article className="deposit-card">
@@ -320,7 +331,7 @@ function DepositCard({
               <select
                 value={renewPlanId}
                 onChange={(event) => onRenewPlanChange(deposit.id.toString(), event.target.value)}
-                disabled={isBusy || plans.length === 0 || !deposit.canPayInterest}
+                disabled={isBusy || plans.length === 0}
               >
                 {plans.map((plan) => (
                   <option key={plan.id.toString()} value={plan.id.toString()}>
@@ -332,12 +343,29 @@ function DepositCard({
                 className="secondary-button"
                 type="button"
                 onClick={() => onRenew(deposit.id)}
-                disabled={isBusy || plans.length === 0 || !deposit.canPayInterest}
+                disabled={isBusy || plans.length === 0 || !canCompoundRenew}
               >
-                Renew
+                Compound Renew
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => onWithdrawInterestAndRenew(deposit.id)}
+                disabled={isBusy || plans.length === 0 || !canInterestOnlyRenew}
+              >
+                Withdraw Interest & Continue Principal
               </button>
               {!deposit.canPayInterest && maturityInterest > 0n && (
                 <p className="helper-text">Renewal is unavailable because interest must be paid before it can be compounded.</p>
+              )}
+              {deposit.canPayInterest && selectedRenewPlan && !isAmountInPlanRange(selectedRenewPlan, compoundedPrincipal) && (
+                <p className="helper-text">
+                  Compound renewal is unavailable because {formatUsdc(compoundedPrincipal)} exceeds the selected plan range.
+                  You may withdraw interest and continue with {formatUsdc(deposit.principal)} if that principal fits the plan.
+                </p>
+              )}
+              {deposit.canPayInterest && selectedRenewPlan && !isAmountInPlanRange(selectedRenewPlan, deposit.principal) && (
+                <p className="helper-text">Interest-only renewal is unavailable because the principal is outside the selected plan range.</p>
               )}
             </>
           )}
@@ -604,6 +632,20 @@ export default function UserDashboard() {
     );
   }
 
+  function handleWithdrawInterestAndRenew(depositId: bigint) {
+    if (!savingCore) return;
+
+    const fallbackPlanId = activePlans[0]?.id.toString();
+    const selectedRenewPlanId = renewPlanByDeposit[depositId.toString()] ?? fallbackPlanId;
+    if (!selectedRenewPlanId) return;
+
+    void runTransaction(
+      "Withdrawing interest and renewing principal...",
+      () => savingCore.withdrawInterestAndRenewPrincipal(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>,
+      "Interest withdrawn and principal renewed successfully."
+    );
+  }
+
   function handleClaimInterest(depositId: bigint) {
     if (!savingCore) return;
 
@@ -695,6 +737,7 @@ export default function UserDashboard() {
                 }
                 onWithdraw={(depositId) => void handleMaturityWithdraw(depositId)}
                 onRenew={handleRenew}
+                onWithdrawInterestAndRenew={handleWithdrawInterestAndRenew}
                 onClaimInterest={handleClaimInterest}
               />
             ))
@@ -724,6 +767,7 @@ export default function UserDashboard() {
                 onEarlyWithdraw={() => undefined}
                 onWithdraw={() => undefined}
                 onRenew={() => undefined}
+                onWithdrawInterestAndRenew={() => undefined}
                 onClaimInterest={handleClaimInterest}
               />
             ))}
@@ -753,6 +797,7 @@ export default function UserDashboard() {
                   onEarlyWithdraw={() => undefined}
                   onWithdraw={() => undefined}
                   onRenew={() => undefined}
+                  onWithdrawInterestAndRenew={() => undefined}
                   onClaimInterest={handleClaimInterest}
                   canManage={false}
                 />

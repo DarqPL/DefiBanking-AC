@@ -120,6 +120,17 @@ At or after maturity, the NFT owner can call `renewDeposit(depositId, newPlanId)
 - New principal becomes `old principal + interest`.
 - A new deposit NFT is minted to the user.
 - The new deposit uses the selected plan's current APR and penalty.
+- Renewal is rejected if the compounded principal is outside the selected plan's min/max limits.
+
+### Withdraw Interest And Continue Principal
+
+At or after maturity, the NFT owner can call `withdrawInterestAndRenewPrincipal(depositId, newPlanId)`.
+
+- Old deposit status becomes `ManualRenewed`.
+- Interest is paid from `VaultManager` directly to the user.
+- The original principal remains in `SavingCore` and backs a new deposit NFT.
+- The new deposit uses the selected plan's current tenor, APR, and penalty.
+- The action is rejected if the vault cannot pay the full interest or the principal is outside the selected plan's min/max limits.
 
 ### Auto-Renewal
 
@@ -131,6 +142,7 @@ After `maturityAt + 3 days`, anyone can call `autoRenewDeposit(depositId)`.
 - A new deposit NFT is minted to the current NFT owner.
 - The renewed deposit preserves the old deposit's original APR and penalty snapshots while the original plan remains enabled.
 - Auto-renew is rejected if the original plan is disabled.
+- Auto-renew is rejected if the compounded principal exceeds the original plan's max limit; the bot pre-checks this and skips that deposit in later runs.
 
 ### Marketplace Listing And Purchase
 
