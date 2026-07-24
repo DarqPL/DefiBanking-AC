@@ -55,6 +55,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @notice Vault contract that holds and pays interest liquidity.
     IVaultManager public immutable vaultManager;
 
+    /// @notice Marketplace contract authorized to transfer active deposit NFTs between accounts.
+    address public depositMarketplace;
+
     /**
      * @notice Lifecycle status for a deposit NFT position.
      * @dev `None` is the default value for deposits that do not exist yet.
@@ -193,6 +196,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @dev Reverts when a renewal needs interest liquidity that the vault cannot currently pay.
     error InterestUnavailable();
 
+    /// @dev Reverts when a deposit NFT transfer is not initiated by the authorized marketplace.
+    error UnauthorizedTransfer();
+
     /**
      * @notice Emitted when a saving plan is created.
      * @param planId Newly assigned plan id.
@@ -302,6 +308,13 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint64 maturityAt,
         bool isAuto
     );
+
+    /**
+     * @notice Emitted when the authorized deposit marketplace is updated.
+     * @param oldMarketplace Previous marketplace address.
+     * @param newMarketplace New marketplace address.
+     */
+    event DepositMarketplaceUpdated(address indexed oldMarketplace, address indexed newMarketplace);
 
     /**
      * @notice Initializes the deposit-position NFT metadata and owner.
@@ -626,6 +639,19 @@ contract SavingCore is ERC721, Ownable, Pausable {
     }
 
     /**
+     * @notice Sets the only marketplace contract allowed to transfer deposit NFTs between accounts.
+     * @param newMarketplace Marketplace address authorized to execute deposit NFT transfers.
+     */
+    function setDepositMarketplace(address newMarketplace) external onlyOwner {
+        if (newMarketplace == address(0)) revert InvalidAddress();
+
+        address oldMarketplace = depositMarketplace;
+        depositMarketplace = newMarketplace;
+
+        emit DepositMarketplaceUpdated(oldMarketplace, newMarketplace);
+    }
+
+    /**
      * @notice Unpauses deposits, withdrawals, and renewal operations after an emergency is resolved.
      */
     function unpause() external onlyOwner {
@@ -648,6 +674,16 @@ contract SavingCore is ERC721, Ownable, Pausable {
         principal = deposit.principal;
         interest = _calculateInterest(deposit);
         canPayInterest = interest == 0 || vaultManager.canPayInterest(interest);
+    }
+
+    /**
+     * @dev Makes deposit NFTs soulbound except for minting, burning, and marketplace-mediated sales.
+     */
+    function _update(address to, uint256 tokenId, address auth) internal override returns (address from) {
+        from = _ownerOf(tokenId);
+        if (from != address(0) && to != address(0) && auth != depositMarketplace) revert UnauthorizedTransfer();
+
+        return super._update(to, tokenId, auth);
     }
 
     /**

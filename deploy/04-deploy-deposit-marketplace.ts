@@ -11,11 +11,19 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const mockUSDC = await deployments.get("MockUSDC");
   const savingCore = await deployments.get("SavingCore");
 
-  await deploy("DepositMarketplace", {
+  const marketplace = await deploy("DepositMarketplace", {
     from: deployer,
     args: [savingCore.address, mockUSDC.address, MARKETPLACE_TERMS_HASH],
     log: true,
   });
+
+  const savingCoreContract = await hre.ethers.getContractAt("SavingCore", savingCore.address);
+  const currentMarketplace = await savingCoreContract.depositMarketplace();
+  if (currentMarketplace.toLowerCase() !== marketplace.address.toLowerCase()) {
+    const tx = await savingCoreContract.setDepositMarketplace(marketplace.address);
+    await tx.wait();
+    console.log(`SavingCore marketplace set to ${marketplace.address}`);
+  }
 };
 
 export default func;

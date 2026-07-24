@@ -19,7 +19,7 @@ flowchart LR
     User -->|list, buy, cancel| Market
     Admin -->|plans, pause| Core
     Admin -->|fund, withdraw, fee receiver, pause| Vault
-    Admin -->|terms, pause, recovery| Market
+    Admin -->|terms, pause| Market
     Bot -->|auto renew| Core
     Bot -->|cleanup stale listings| Market
     Core -->|holds user principal| Token
@@ -143,7 +143,7 @@ Result:
 
 - Principal is held by `SavingCore`.
 - User receives a deposit NFT.
-- The NFT owner controls future withdrawal, renewal, transfer, or marketplace sale rights.
+- The NFT owner controls future withdrawal, renewal, early-withdrawal, or marketplace sale rights. Direct wallet-to-wallet NFT transfers revert.
 - `minDeposit = 0` means no lower limit, and `maxDeposit = 0` means no upper limit.
 
 ## Withdraw At Maturity
@@ -373,7 +373,7 @@ Purchase result:
 
 - Seller receives the listing price in `MockUSDC`.
 - Buyer receives the actual `SavingCore` deposit NFT.
-- Buyer becomes the deposit owner and controls future withdrawal, renewal, transfer, or sale rights.
+- Buyer becomes the deposit owner and controls future withdrawal, renewal, early-withdrawal, or future marketplace-sale rights.
 
 ## Marketplace Cancel And Cleanup
 
@@ -459,6 +459,7 @@ Lifecycle rules:
 - Only `Active` deposits can be withdrawn, renewed, listed, or bought.
 - Withdrawals and renewals close the old deposit, preventing double withdrawal.
 - Marketplace transfers do not change deposit status; they only change ERC721 ownership.
+- Direct peer-to-peer ERC721 transfers are rejected; only the authorized marketplace can transfer ownership between nonzero addresses.
 - The current ERC721 owner owns the deposit action rights.
 
 ## Approval Matrix

@@ -59,7 +59,7 @@ Capture the base implementation requirements needed to build the working system 
   - Do not implement Section 8.3 bonus challenges during the first implementation pass.
   - Build the base assignment behavior first, then revisit Section 8 to brainstorm improvements and refine contract structure.
 - Define only the minimum base behavior needed to avoid blocking implementation:
-  - Use the current NFT owner for deposit actions if NFTs remain transferable.
+  - Use the current NFT owner for deposit actions, with ownership transfer limited to the authorized marketplace.
   - Follow the base empty-vault rule unless Section 8 later changes it.
   - Use the assignment formulas for interest, penalty, maturity, and grace-period checks.
   - Preserve principal and vault separation from the beginning.
@@ -294,14 +294,14 @@ Implement the user flow where a depositor opens a fixed-term saving position and
   - `0` is valid but should be tested and documented if used.
   - `1` may be more user-friendly but requires changing current counters.
 - Confirm transferability behavior:
-  - ERC721 certificates are transferable unless deliberately blocked.
-  - Withdraw and renew functions should authorize `ownerOf(depositId)`, not the original depositor, if NFT transferability is intended.
+  - ERC721 certificates are soulbound unless transferred by the authorized marketplace.
+  - Withdraw and renew functions authorize `ownerOf(depositId)`, so marketplace buyers receive deposit rights while direct wallet sends have no effect.
 
 ### Deliverables
 
 - Deposit opening implementation.
 - Tests for happy path, below min, above max, disabled plan, unknown plan, zero amount, and snapshot behavior.
-- README design answer for transferable certificate ownership.
+- README design answer for marketplace-only certificate transfer ownership.
 
 ### Exit Criteria
 
@@ -341,7 +341,7 @@ Implement correct principal-plus-interest withdrawal after maturity, with intere
 ### Deliverables
 
 - Maturity withdrawal implementation.
-- Tests for correct interest, too early, exact maturity, insufficient vault, repeat withdrawal, and transferred NFT owner withdrawal.
+- Tests for correct interest, too early, exact maturity, insufficient vault, repeat withdrawal, and direct NFT transfer rejection.
 - README design answers for empty vault, rounding dust, boundary times, and attack prevention.
 
 ### Exit Criteria

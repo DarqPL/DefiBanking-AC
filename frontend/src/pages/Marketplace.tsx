@@ -272,8 +272,11 @@ function TermsPanel({ currentTermsHash }: { currentTermsHash: string }) {
         </p>
         <p>
           If a buyer purchases the listing, the buyer receives the deposit NFT and becomes the holder of all future rights attached to that
-          deposit position, including eligible maturity withdrawal, renewal, transfer, or early-withdrawal rights under the SavingCore
+          deposit position, including eligible maturity withdrawal, renewal, early-withdrawal, or future marketplace-listing rights under the SavingCore
           contract.
+        </p>
+        <p>
+          Direct wallet-to-wallet NFT transfers outside this marketplace are rejected by SavingCore and do not change deposit ownership.
         </p>
         <p>
           The seller receives the listed USDC sale price when a purchase transaction succeeds. The protocol does not guarantee that the sale

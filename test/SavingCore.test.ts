@@ -163,6 +163,20 @@ describe("SavingCore", function () {
       await expectCustomError(SavingCore.deploy(await mockUSDC.getAddress(), ethers.ZeroAddress), savingCore.interface, "InvalidAddress");
     });
 
+    it("lets only the owner update the authorized marketplace", async function () {
+      const { other, savingCore } = await deploySavingCoreFixture();
+
+      await expectCustomError(savingCore.setDepositMarketplace.staticCall(ethers.ZeroAddress), savingCore.interface, "InvalidAddress");
+      await expectCustomError(
+        savingCore.connect(other).setDepositMarketplace.staticCall(other.address),
+        savingCore.interface,
+        "OwnableUnauthorizedAccount",
+      );
+
+      await savingCore.setDepositMarketplace(other.address);
+      expect(await savingCore.depositMarketplace()).to.equal(other.address);
+    });
+
     it("allows zero min or max deposit limits to mean no limit", async function () {
       const { user, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
 
@@ -362,31 +376,66 @@ describe("SavingCore", function () {
       await expectCustomError(savingCore.connect(user).claimInterest.staticCall(0), savingCore.interface, "NoUnpaidInterest");
     });
 
-    it("stores the transferred NFT owner as the deferred-interest claimant", async function () {
-      const { user, other, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
-      await openDefaultDeposit();
-      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
-      await vaultManager.withdrawVault(vaultFunds);
-      await time.increase(Number(tenorSeconds));
-
-      await savingCore.connect(other).withdrawAtMaturity(0);
-
-      expect(await savingCore.interestClaimant(0)).to.equal(other.address);
-      await expectCustomError(savingCore.connect(user).claimInterest.staticCall(0), savingCore.interface, "NotInterestClaimant");
-    });
-
-    it("lets the transferred deposit NFT owner withdraw at maturity", async function () {
+    it("rejects direct transferFrom between wallets", async function () {
       const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
 
-      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
-      expect(await savingCore.ownerOf(0)).to.equal(other.address);
+      await expectCustomError(
+        savingCore.connect(user).transferFrom.staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
+      expect(await savingCore.ownerOf(0)).to.equal(user.address);
+    });
 
-      await expectCustomError(savingCore.connect(user).withdrawAtMaturity.staticCall(0), savingCore.interface, "NotDepositOwner");
+    it("rejects direct safeTransferFrom between wallets", async function () {
+      const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+
+      await expectCustomError(
+        savingCore.connect(user)["safeTransferFrom(address,address,uint256)"].staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
+      expect(await savingCore.ownerOf(0)).to.equal(user.address);
+    });
+
+    it("rejects approved operators from bypassing the marketplace", async function () {
+      const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+
+      await savingCore.connect(user).approve(other.address, 0);
+      await expectCustomError(
+        savingCore.connect(other).transferFrom.staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
+
+      await savingCore.connect(user).setApprovalForAll(other.address, true);
+      await expectCustomError(
+        savingCore.connect(other).transferFrom.staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
+      expect(await savingCore.ownerOf(0)).to.equal(user.address);
+    });
+
+    it("keeps the original owner as the deferred-interest claimant when direct transfer is rejected", async function () {
+      const { user, other, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      await openDefaultDeposit();
+
+      await expectCustomError(
+        savingCore.connect(user).transferFrom.staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
+      await vaultManager.withdrawVault(vaultFunds);
       await time.increase(Number(tenorSeconds));
 
-      await savingCore.connect(other).withdrawAtMaturity(0);
-      expect((await savingCore.deposits(0)).status).to.equal(2n);
+      await savingCore.connect(user).withdrawAtMaturity(0);
+
+      expect(await savingCore.interestClaimant(0)).to.equal(user.address);
+      await expectCustomError(savingCore.connect(other).claimInterest.staticCall(0), savingCore.interface, "NotInterestClaimant");
     });
   });
 
@@ -443,14 +492,18 @@ describe("SavingCore", function () {
       await expectCustomError(savingCore.connect(user).earlyWithdraw.staticCall(0), savingCore.interface, "AlreadyMatured");
     });
 
-    it("lets the transferred deposit NFT owner withdraw early", async function () {
+    it("keeps early withdrawal rights with the original owner when direct transfer is rejected", async function () {
       const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
 
-      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
+      await expectCustomError(
+        savingCore.connect(user).transferFrom.staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
 
-      await expectCustomError(savingCore.connect(user).earlyWithdraw.staticCall(0), savingCore.interface, "NotDepositOwner");
-      await savingCore.connect(other).earlyWithdraw(0);
+      await expectCustomError(savingCore.connect(other).earlyWithdraw.staticCall(0), savingCore.interface, "NotDepositOwner");
+      await savingCore.connect(user).earlyWithdraw(0);
       expect((await savingCore.deposits(0)).status).to.equal(3n);
     });
   });
@@ -505,19 +558,23 @@ describe("SavingCore", function () {
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(99, 1), savingCore.interface, "DepositNotFound");
     });
 
-    it("lets the transferred deposit NFT owner manually renew at maturity", async function () {
+    it("keeps manual renewal rights with the original owner when direct transfer is rejected", async function () {
       const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
       await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
-      await savingCore.connect(user).transferFrom(user.address, other.address, 0);
+      await expectCustomError(
+        savingCore.connect(user).transferFrom.staticCall(user.address, other.address, 0),
+        savingCore.interface,
+        "UnauthorizedTransfer",
+      );
 
       await time.increase(Number(tenorSeconds));
 
-      await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "NotDepositOwner");
-      await savingCore.connect(other).renewDeposit(0, 1);
+      await expectCustomError(savingCore.connect(other).renewDeposit.staticCall(0, 1), savingCore.interface, "NotDepositOwner");
+      await savingCore.connect(user).renewDeposit(0, 1);
 
       expect((await savingCore.deposits(0)).status).to.equal(4n);
-      expect(await savingCore.ownerOf(1)).to.equal(other.address);
+      expect(await savingCore.ownerOf(1)).to.equal(user.address);
     });
 
     it("blocks manual renewal for a deposit when the vault cannot pay the interest to compound", async function () {

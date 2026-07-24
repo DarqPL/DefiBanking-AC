@@ -277,6 +277,11 @@
         "type": "error"
     },
     {
+        "inputs": [],
+        "name": "UnauthorizedTransfer",
+        "type": "error"
+    },
+    {
         "anonymous": false,
         "inputs": [
             {
@@ -324,6 +329,25 @@
             }
         ],
         "name": "ApprovalForAll",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "oldMarketplace",
+                "type": "address"
+            },
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "newMarketplace",
+                "type": "address"
+            }
+        ],
+        "name": "DepositMarketplaceUpdated",
         "type": "event"
     },
     {
@@ -832,6 +856,19 @@
         "type": "function"
     },
     {
+        "inputs": [],
+        "name": "depositMarketplace",
+        "outputs": [
+            {
+                "internalType": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
         "inputs": [
             {
                 "internalType": "uint256",
@@ -1253,6 +1290,19 @@
             }
         ],
         "name": "setApprovalForAll",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "newMarketplace",
+                "type": "address"
+            }
+        ],
+        "name": "setDepositMarketplace",
         "outputs": [],
         "stateMutability": "nonpayable",
         "type": "function"

@@ -1,8 +1,8 @@
 # Section 8.2 Design Answers Draft
 
-### 1. Transferable Certificate
+### 1. Soulbound Certificate With Marketplace Transfer
 
-The current ERC721 owner controls the deposit. If Alice sells or transfers her deposit NFT to Bob before maturity, Bob can withdraw or renew the deposit, and Alice cannot. This matches the idea that the NFT is the certificate/passbook for the saving position.
+The current ERC721 owner controls the deposit, but users cannot freely transfer deposit NFTs. Direct wallet-to-wallet transfers are rejected, so Alice cannot bypass the marketplace by sending her deposit NFT directly to Bob. Bob only becomes the valid owner if he buys through the authorized `DepositMarketplace`.
 
 The rule is decided by checking `ownerOf(depositId)` against the caller. In maturity withdrawal, the current NFT owner is stored as `account` and must equal the caller:
 
@@ -24,9 +24,9 @@ address account = ownerOf(depositId);
 if (account != msg.sender) revert NotDepositOwner();
 ```
 
-This behavior is useful because it makes deposit NFTs transferable financial positions. It is also dangerous if users do not understand the consequence: transferring the NFT transfers control over withdrawal and renewal rights.
+This preserves the marketplace as the only valid sale path while keeping ERC721 ownership as the source of truth for withdrawal and renewal rights. MetaMask or other wallet "send" flows call `transferFrom` or `safeTransferFrom`, and those calls revert unless they are initiated by the authorized marketplace.
 
-Test coverage: `test/SavingCore.test.ts` includes `lets the transferred deposit NFT owner withdraw at maturity`, `lets the transferred deposit NFT owner withdraw early`, and `lets the transferred deposit NFT owner manually renew at maturity`.
+Test coverage: `test/SavingCore.test.ts` includes direct `transferFrom` and `safeTransferFrom` rejection tests, approved-operator bypass rejection, and checks that withdrawal, early-withdrawal, renewal, and deferred-interest rights remain with the valid owner when a direct transfer is rejected. `test/DepositMarketplace.test.ts` confirms marketplace purchase still transfers ownership to the buyer.
 
 ### 2. Empty Vault
 

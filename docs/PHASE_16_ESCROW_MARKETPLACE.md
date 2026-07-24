@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a native marketplace where users can sell transferable savings-account NFTs while preserving the core rule that the current `SavingCore` NFT owner owns the withdrawal right.
+Build a native marketplace where users can sell savings-account NFTs while preserving the core rule that the current `SavingCore` NFT owner owns the withdrawal right. Direct peer-to-peer transfers are prohibited so marketplace execution is the only valid ownership-transfer path.
 
 The official deposit passbook identity is:
 
@@ -20,7 +20,7 @@ An NFT with the same metadata, APR, principal, and maturity date is not authenti
 - `earlyWithdraw(depositId)` requires `ownerOf(depositId) == msg.sender`.
 - `renewDeposit(depositId, newPlanId)` requires `ownerOf(depositId) == msg.sender`.
 
-This means transferred NFTs are valid passbooks. If Alice transfers a deposit NFT to Bob, Bob can withdraw or renew and Alice cannot.
+This means marketplace-purchased NFTs are valid passbooks. If Alice tries to send a deposit NFT directly to Bob, the transfer reverts and Alice remains the owner. If Bob buys the deposit through `DepositMarketplace`, Bob can withdraw or renew and Alice cannot.
 
 ## Marketplace Contract
 
@@ -80,7 +80,7 @@ The marketplace should check the listing again at purchase time:
 
 Then it transfers payment to the seller and the NFT to the buyer.
 
-The buyer becomes the current ERC721 owner and can later withdraw or renew through `SavingCore`.
+The buyer becomes the current ERC721 owner and can later withdraw or renew through `SavingCore`. Direct wallet transfers outside the marketplace remain invalid and have no ownership effect.
 
 ## No-Listing Window
 
@@ -233,7 +233,7 @@ Completed contract work:
 - The marketplace implements targeted cleanup with `isListingStale(uint256 depositId)` and `cleanListings(uint256[] depositIds)` for the Vercel cron API.
 - `cleanExpiredListings(uint256 maxListings)` remains available as a permissionless cursor fallback.
 - The marketplace rejects direct `safeTransferFrom` deposits and rejects `_safeMint` renewal mints from `SavingCore` while escrowed.
-- The marketplace owner can recover an unlisted NFT sent by raw ERC721 `transferFrom`.
+- `SavingCore` now rejects raw ERC721 `transferFrom` and `safeTransferFrom` calls unless they are initiated by the authorized marketplace.
 
 Completed deployment work:
 
@@ -310,9 +310,9 @@ Marketplace Terms v1 shown in the UI:
 ```text
 By listing a deposit NFT, the seller confirms that the NFT represents an active SavingCore deposit position and agrees to transfer that NFT into DepositMarketplace escrow.
 
-While the NFT is held in escrow, the seller will not control the deposit NFT and cannot withdraw, renew, early-withdraw, transfer, or otherwise exercise deposit-owner rights unless the listing is cancelled or cleaned up and the NFT is returned.
+While the NFT is held in escrow, the seller will not control the deposit NFT and cannot withdraw, renew, early-withdraw, list, or otherwise exercise deposit-owner rights unless the listing is cancelled or cleaned up and the NFT is returned.
 
-If a buyer purchases the listing, the buyer receives the deposit NFT and becomes the holder of all future rights attached to that deposit position, including eligible maturity withdrawal, renewal, transfer, or early-withdrawal rights under the SavingCore contract.
+If a buyer purchases the listing, the buyer receives the deposit NFT and becomes the holder of all future rights attached to that deposit position, including eligible maturity withdrawal, renewal, early-withdrawal, or future marketplace-listing rights under the SavingCore contract.
 
 The seller receives the listed USDC sale price when a purchase transaction succeeds. The protocol does not guarantee that the sale price equals the deposit principal, accrued interest, fair market value, or expected maturity value.
 
@@ -321,7 +321,7 @@ Listings may be cancelled by the seller before purchase. Listings that enter the
 All listing, purchase, cancellation, cleanup, ownership, withdrawal, renewal, and transfer outcomes are determined by the deployed smart contracts. This interface is informational and does not override on-chain contract behavior.
 ```
 
-README has been updated with the Phase 16 transferable-certificate marketplace answer and targeted cleanup behavior.
+README has been updated with the marketplace-only transfer answer and targeted cleanup behavior.
 
 ## Security Notes
 

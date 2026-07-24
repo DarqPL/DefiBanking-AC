@@ -7,7 +7,7 @@ The design keeps user principal and bank interest liquidity separate:
 - `SavingCore` holds user principal and manages deposit NFTs.
 - `VaultManager` holds bank-owned liquidity used to pay interest.
 - `MockUSDC` is the 6-decimal ERC20 token used for testing and demo flows.
-- `DepositMarketplace` escrows transferable deposit NFTs so active deposit positions can be listed, bought, cancelled, or cleaned up.
+- `DepositMarketplace` is the only authorized transfer path for deposit NFTs, which are otherwise soulbound.
 
 ## Personal Variant
 
@@ -148,7 +148,9 @@ Buyer flow:
 1. Buyer approves `DepositMarketplace` to spend the listing price in MockUSDC.
 2. Buyer calls `buyDeposit(depositId)`.
 3. Marketplace pays the seller and transfers the NFT to the buyer.
-4. Buyer becomes the deposit NFT owner and controls future withdrawal, renewal, transfer, or early-withdrawal rights.
+4. Buyer becomes the deposit NFT owner and controls future withdrawal, renewal, early-withdrawal, or future marketplace-listing rights.
+
+Direct wallet-to-wallet NFT transfers, including MetaMask "Send NFT", are rejected by `SavingCore` and do not change deposit ownership.
 
 Listings too close to maturity are blocked by the marketplace no-listing window. Existing listings that later enter the restricted window can be cleaned up by calling `cleanListings(uint256[] depositIds)`, returning NFTs to sellers. The older `cleanExpiredListings(uint256 maxListings)` cursor cleanup remains available as a permissionless fallback.
 
@@ -327,9 +329,9 @@ The frontend build may show a non-blocking Vite warning that the main JavaScript
 
 ## Section 8.2 Design Answers
 
-### 1. Transferable Certificate
+### 1. Soulbound Certificate With Marketplace Transfer
 
-The current ERC721 owner controls the deposit. If Alice sells or transfers her deposit NFT to Bob before maturity, Bob can withdraw or renew the deposit, and Alice cannot. This matches the idea that the NFT is the certificate/passbook for the saving position.
+The current ERC721 owner controls the deposit, but users cannot freely transfer deposit NFTs. Direct wallet-to-wallet transfers are rejected, so Alice cannot bypass the marketplace by sending her deposit NFT directly to Bob. Bob only becomes the valid owner if he buys through the authorized `DepositMarketplace`.
 
 The rule is decided by checking `ownerOf(depositId)` against the caller. In maturity withdrawal, the current NFT owner is stored as `account` and must equal the caller:
 
@@ -351,9 +353,9 @@ address account = ownerOf(depositId);
 if (account != msg.sender) revert NotDepositOwner();
 ```
 
-This behavior is useful because it makes deposit NFTs transferable financial positions. It is also dangerous if users do not understand the consequence: transferring the NFT transfers control over withdrawal and renewal rights.
+This preserves the marketplace as the only valid sale path while keeping ERC721 ownership as the source of truth for withdrawal and renewal rights. MetaMask or other wallet "send" flows call `transferFrom` or `safeTransferFrom`, and those calls revert unless they are initiated by the authorized marketplace.
 
-Test coverage: `test/SavingCore.test.ts` includes `lets the transferred deposit NFT owner withdraw at maturity`, `lets the transferred deposit NFT owner withdraw early`, and `lets the transferred deposit NFT owner manually renew at maturity`.
+Test coverage: `test/SavingCore.test.ts` includes direct `transferFrom` and `safeTransferFrom` rejection tests, approved-operator bypass rejection, and checks that withdrawal, early-withdrawal, renewal, and deferred-interest rights remain with the valid owner when a direct transfer is rejected. `test/DepositMarketplace.test.ts` confirms marketplace purchase still transfers ownership to the buyer.
 
 ### 2. Empty Vault
 
@@ -604,7 +606,7 @@ This prevents creating a new deposit with unpaid interest that `SavingCore` does
 
 ### C5: Built-In Escrow Marketplace For Savings NFTs
 
-The extra problem I chose for C5 is that users may want to sell their savings positions before maturity. Because deposit NFTs are transferable, they could sell them externally, but that creates trust and authenticity problems. A buyer needs to know the NFT is the real `SavingCore` certificate, that the deposit is still active, and that payment and NFT transfer happen safely.
+The extra problem I chose for C5 is that users may want to sell their savings positions before maturity. Because direct deposit NFT transfers would make the official marketplace irrelevant, `SavingCore` makes deposit NFTs soulbound except for transfers initiated by the authorized `DepositMarketplace`. A buyer needs to know the NFT is the real `SavingCore` certificate, that the deposit is still active, and that payment and NFT transfer happen safely.
 
 The solution is a built-in `DepositMarketplace` contract. It escrows official `SavingCore` deposit NFTs, lets sellers list them for MockUSDC, and transfers payment and the NFT atomically during purchase.
 
@@ -645,6 +647,6 @@ paymentToken.safeTransferFrom(msg.sender, listing.seller, listing.price);
 savingCore.safeTransferFrom(address(this), msg.sender, depositId);
 ```
 
-After purchase, the buyer owns the actual ERC721 deposit certificate. Since `SavingCore` uses `ownerOf(depositId)` for withdrawal and renewal authority, the buyer receives the future deposit rights.
+After purchase, the buyer owns the actual ERC721 deposit certificate. Since `SavingCore` uses `ownerOf(depositId)` for withdrawal and renewal authority, the buyer receives the future deposit rights. Direct peer-to-peer NFT transfers outside the marketplace revert and have no ownership effect.
 
 This improves user experience because users do not need to rely on external marketplaces or informal OTC transfers. If a seller lists at a reasonable price, buyers can safely acquire the position through the protocol's own escrow flow. The trade-off is extra contract and frontend complexity, plus the need for marketplace terms and cleanup logic for stale listings.

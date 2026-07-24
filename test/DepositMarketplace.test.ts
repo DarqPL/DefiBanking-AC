@@ -60,6 +60,7 @@ describe("DepositMarketplace", function () {
     const marketplaceAddress = await marketplace.getAddress();
 
     await vaultManager.setSavingCore(savingCoreAddress);
+    await savingCore.setDepositMarketplace(marketplaceAddress);
     await mockUSDC.mint(seller.address, userFunds);
     await mockUSDC.mint(buyer.address, buyerFunds);
     await mockUSDC.approve(vaultAddress, vaultFunds);
@@ -400,46 +401,29 @@ describe("DepositMarketplace", function () {
   });
 
   describe("ERC721 Receiver Guard", function () {
-    it("rejects direct transfers into the marketplace", async function () {
-      const { seller, savingCore, marketplace, marketplaceAddress, openDeposit } = await deployMarketplaceFixture();
+    it("rejects direct safe transfers into the marketplace", async function () {
+      const { seller, savingCore, marketplaceAddress, openDeposit } = await deployMarketplaceFixture();
       const depositId = await openDeposit();
 
       await savingCore.connect(seller).approve(marketplaceAddress, depositId);
       await expectCustomError(
         savingCore.connect(seller)["safeTransferFrom(address,address,uint256)"].staticCall(seller.address, marketplaceAddress, depositId),
-        marketplace.interface,
-        "DirectTransferRejected",
+        savingCore.interface,
+        "UnauthorizedTransfer",
       );
     });
 
-    it("lets the owner recover an unlisted NFT sent with raw transferFrom", async function () {
-      const { seller, buyer, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
+    it("rejects raw transferFrom into the marketplace", async function () {
+      const { seller, savingCore, marketplace, marketplaceAddress, openDeposit } = await deployMarketplaceFixture();
       const depositId = await openDeposit();
 
-      await savingCore.connect(seller).transferFrom(seller.address, marketplaceAddress, depositId);
-      expect(await savingCore.ownerOf(depositId)).to.equal(marketplaceAddress);
-      expect(await marketplace.listedCount()).to.equal(0n);
-
       await expectCustomError(
-        marketplace.connect(buyer).recoverUnlistedDeposit.staticCall(depositId, seller.address),
-        marketplace.interface,
-        "OwnableUnauthorizedAccount",
+        savingCore.connect(seller).transferFrom.staticCall(seller.address, marketplaceAddress, depositId),
+        savingCore.interface,
+        "UnauthorizedTransfer",
       );
-      await expectCustomError(
-        marketplace.recoverUnlistedDeposit.staticCall(depositId, ethers.ZeroAddress),
-        marketplace.interface,
-        "InvalidAddress",
-      );
-
-      await marketplace.recoverUnlistedDeposit(depositId, seller.address);
       expect(await savingCore.ownerOf(depositId)).to.equal(seller.address);
-
-      await listDeposit(depositId);
-      await expectCustomError(
-        marketplace.recoverUnlistedDeposit.staticCall(depositId, seller.address),
-        marketplace.interface,
-        "AlreadyListed",
-      );
+      expect(await marketplace.listedCount()).to.equal(0n);
     });
 
     it("rejects recovery when the marketplace does not hold the NFT", async function () {
