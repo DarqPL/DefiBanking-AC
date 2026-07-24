@@ -200,6 +200,11 @@
     },
     {
         "inputs": [],
+        "name": "MetadataLocked",
+        "type": "error"
+    },
+    {
+        "inputs": [],
         "name": "NewPrincipalOutOfRange",
         "type": "error"
     },
@@ -453,6 +458,31 @@
             }
         ],
         "name": "InterestDeferred",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": false,
+                "internalType": "string",
+                "name": "oldImageURI",
+                "type": "string"
+            },
+            {
+                "indexed": false,
+                "internalType": "string",
+                "name": "newImageURI",
+                "type": "string"
+            }
+        ],
+        "name": "MetadataImageURIUpdated",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [],
+        "name": "MetadataPermanentlyLocked",
         "type": "event"
     },
     {
@@ -1020,6 +1050,39 @@
     },
     {
         "inputs": [],
+        "name": "lockMetadata",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "metadataImageURI",
+        "outputs": [
+            {
+                "internalType": "string",
+                "name": "",
+                "type": "string"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "metadataLocked",
+        "outputs": [
+            {
+                "internalType": "bool",
+                "name": "",
+                "type": "bool"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
         "name": "name",
         "outputs": [
             {
@@ -1303,6 +1366,19 @@
             }
         ],
         "name": "setDepositMarketplace",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "string",
+                "name": "newImageURI",
+                "type": "string"
+            }
+        ],
+        "name": "setMetadataImageURI",
         "outputs": [],
         "stateMutability": "nonpayable",
         "type": "function"

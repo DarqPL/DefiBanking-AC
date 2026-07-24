@@ -6,6 +6,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
 
 /**
  * @notice Minimal VaultManager interface used by SavingCore to pay maturity interest.
@@ -39,6 +41,7 @@ interface IVaultManager {
  */
 contract SavingCore is ERC721, Ownable, Pausable {
     using SafeERC20 for IERC20;
+    using Strings for uint256;
 
     /// @notice Basis-points denominator used for APR and penalty values.
     uint16 public constant BPS_DENOMINATOR = 10_000;
@@ -57,6 +60,12 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /// @notice Marketplace contract authorized to transfer active deposit NFTs between accounts.
     address public depositMarketplace;
+
+    /// @notice Whether token metadata URI updates have been permanently disabled.
+    bool public metadataLocked;
+
+    /// @notice IPFS image URI used in dynamically generated deposit NFT metadata.
+    string public metadataImageURI;
 
     /**
      * @notice Lifecycle status for a deposit NFT position.
@@ -199,6 +208,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @dev Reverts when a deposit NFT transfer is not initiated by the authorized marketplace.
     error UnauthorizedTransfer();
 
+    /// @dev Reverts when trying to update metadata after it has been permanently locked.
+    error MetadataLocked();
+
     /**
      * @notice Emitted when a saving plan is created.
      * @param planId Newly assigned plan id.
@@ -317,6 +329,16 @@ contract SavingCore is ERC721, Ownable, Pausable {
     event DepositMarketplaceUpdated(address indexed oldMarketplace, address indexed newMarketplace);
 
     /**
+     * @notice Emitted when the metadata image URI is updated.
+     * @param oldImageURI Previous image URI.
+     * @param newImageURI New image URI.
+     */
+    event MetadataImageURIUpdated(string oldImageURI, string newImageURI);
+
+    /// @notice Emitted when token metadata URI updates are permanently disabled.
+    event MetadataPermanentlyLocked();
+
+    /**
      * @notice Initializes the deposit-position NFT metadata and owner.
      */
     constructor(address _token, address _vaultManager) ERC721("DeFi Saving Deposit", "DSD") Ownable(msg.sender) {
@@ -413,18 +435,23 @@ contract SavingCore is ERC721, Ownable, Pausable {
         SavingPlan storage plan = _getExistingPlan(planId);
         if (!plan.enabled) revert PlanNotEnabled();
         if (amount == 0) revert InvalidAmount();
-        if (plan.minDeposit != 0 && amount < plan.minDeposit) revert AmountBelowMinimum();
-        if (plan.maxDeposit != 0 && amount > plan.maxDeposit) revert AmountAboveMaximum();
+        uint256 minDeposit = plan.minDeposit;
+        uint256 maxDeposit = plan.maxDeposit;
+        if (minDeposit != 0 && amount < minDeposit) revert AmountBelowMinimum();
+        if (maxDeposit != 0 && amount > maxDeposit) revert AmountAboveMaximum();
 
-        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(plan.tenorDays) * 1 days);
+        uint64 tenorDays = plan.tenorDays;
+        uint16 aprBps = plan.aprBps;
+        uint16 earlyWithdrawPenaltyBps = plan.earlyWithdrawPenaltyBps;
+        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(tenorDays) * 1 days);
         uint256 depositId = _storeAndMintDeposit(
             msg.sender,
             planId,
             amount,
             startAt,
             maturityAt,
-            plan.aprBps,
-            plan.earlyWithdrawPenaltyBps
+            aprBps,
+            earlyWithdrawPenaltyBps
         );
 
         emit DepositOpened(
@@ -434,8 +461,8 @@ contract SavingCore is ERC721, Ownable, Pausable {
             amount,
             startAt,
             maturityAt,
-            plan.aprBps,
-            plan.earlyWithdrawPenaltyBps
+            aprBps,
+            earlyWithdrawPenaltyBps
         );
 
         token.safeTransferFrom(msg.sender, address(this), amount);
@@ -450,10 +477,11 @@ contract SavingCore is ERC721, Ownable, Pausable {
         DepositInfo storage deposit = _getActiveDeposit(depositId);
         address account = msg.sender;
         if (ownerOf(depositId) != account) revert NotDepositOwner();
-        if (block.timestamp < deposit.maturityAt) revert NotMatured();
+        uint64 maturityAt = deposit.maturityAt;
+        if (block.timestamp < maturityAt) revert NotMatured();
 
         uint256 principal = deposit.principal;
-        uint256 interest = _calculateInterest(deposit);
+        uint256 interest = _calculateInterest(principal, deposit.aprBpsAtOpen, uint256(maturityAt) - deposit.startAt);
         uint256 paidInterest;
 
         deposit.status = DepositStatus.Withdrawn;
@@ -530,13 +558,15 @@ contract SavingCore is ERC721, Ownable, Pausable {
         DepositInfo storage oldDeposit = _getActiveDeposit(depositId);
         address account = ownerOf(depositId);
         if (account != msg.sender) revert NotDepositOwner();
-        if (block.timestamp < oldDeposit.maturityAt) revert NotMatured();
+        uint64 oldMaturityAt = oldDeposit.maturityAt;
+        if (block.timestamp < oldMaturityAt) revert NotMatured();
 
         SavingPlan storage newPlan = _getExistingPlan(newPlanId);
         if (!newPlan.enabled) revert PlanNotEnabled();
 
         uint256 oldPrincipal = oldDeposit.principal;
-        uint256 interest = _calculateInterest(oldDeposit);
+        uint64 oldStartAt = oldDeposit.startAt;
+        uint256 interest = _calculateInterest(oldPrincipal, oldDeposit.aprBpsAtOpen, uint256(oldMaturityAt) - oldStartAt);
         if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
         uint256 newPrincipal = oldPrincipal + interest;
         if (
@@ -582,24 +612,25 @@ contract SavingCore is ERC721, Ownable, Pausable {
      */
     function autoRenewDeposit(uint256 depositId) external whenNotPaused {
         DepositInfo storage oldDeposit = _getActiveDeposit(depositId);
-        uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+        uint64 oldMaturityAt = oldDeposit.maturityAt;
+        uint256 renewAfter = uint256(oldMaturityAt) + AUTO_RENEW_GRACE_PERIOD;
         if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 
-        SavingPlan storage originalPlan = _getExistingPlan(oldDeposit.planId);
+        uint256 planId = oldDeposit.planId;
+        SavingPlan storage originalPlan = _getExistingPlan(planId);
         if (!originalPlan.enabled) revert PlanNotEnabled();
 
         address account = ownerOf(depositId);
         uint256 oldPrincipal = oldDeposit.principal;
-        uint256 interest = _calculateInterest(oldDeposit);
-        if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
-        uint256 newPrincipal = oldPrincipal + interest;
-        uint256 tenorSeconds = uint256(oldDeposit.maturityAt) - oldDeposit.startAt;
-
-        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(tenorSeconds);
-
-        uint256 planId = oldDeposit.planId;
+        uint64 oldStartAt = oldDeposit.startAt;
         uint16 aprBpsAtOpen = oldDeposit.aprBpsAtOpen;
         uint16 penaltyBpsAtOpen = oldDeposit.penaltyBpsAtOpen;
+        uint256 tenorSeconds = uint256(oldMaturityAt) - oldStartAt;
+        uint256 interest = _calculateInterest(oldPrincipal, aprBpsAtOpen, tenorSeconds);
+        if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
+        uint256 newPrincipal = oldPrincipal + interest;
+
+        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(tenorSeconds);
 
         oldDeposit.status = DepositStatus.AutoRenewed;
         uint256 newDepositId = _storeAndMintDeposit(
@@ -652,6 +683,28 @@ contract SavingCore is ERC721, Ownable, Pausable {
     }
 
     /**
+     * @notice Sets the IPFS image URI used in dynamically generated NFT metadata.
+     * @param newImageURI Image URI such as `ipfs://CID/deposit-certificate.png`.
+     */
+    function setMetadataImageURI(string calldata newImageURI) external onlyOwner {
+        if (metadataLocked) revert MetadataLocked();
+
+        string memory oldImageURI = metadataImageURI;
+        metadataImageURI = newImageURI;
+
+        emit MetadataImageURIUpdated(oldImageURI, newImageURI);
+    }
+
+    /**
+     * @notice Permanently prevents future metadata image URI updates.
+     */
+    function lockMetadata() external onlyOwner {
+        metadataLocked = true;
+
+        emit MetadataPermanentlyLocked();
+    }
+
+    /**
      * @notice Unpauses deposits, withdrawals, and renewal operations after an emergency is resolved.
      */
     function unpause() external onlyOwner {
@@ -672,8 +725,82 @@ contract SavingCore is ERC721, Ownable, Pausable {
     {
         DepositInfo storage deposit = _getActiveDeposit(depositId);
         principal = deposit.principal;
-        interest = _calculateInterest(deposit);
+        interest = _calculateInterest(principal, deposit.aprBpsAtOpen, uint256(deposit.maturityAt) - deposit.startAt);
         canPayInterest = interest == 0 || vaultManager.canPayInterest(interest);
+    }
+
+    /**
+     * @notice Returns Base64-encoded JSON metadata generated from current deposit state.
+     * @param tokenId Deposit NFT id.
+     */
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        _requireOwned(tokenId);
+
+        DepositInfo storage deposit = deposits[tokenId];
+        bytes memory json = abi.encodePacked(
+            "{",
+            '"name":"DeFi Saving Deposit #',
+            tokenId.toString(),
+            '","description":"Soulbound DeFi term-deposit certificate. Transferable only through the official marketplace.",',
+            '"image":"',
+            metadataImageURI,
+            '","attributes":[',
+            '{"trait_type":"Principal","value":"',
+            _formatUsdc(deposit.principal),
+            '"},',
+            '{"trait_type":"APR","value":"',
+            _formatBps(deposit.aprBpsAtOpen),
+            '"},',
+            '{"trait_type":"Maturity Timestamp","value":"',
+            uint256(deposit.maturityAt).toString(),
+            '"},',
+            '{"trait_type":"Status","value":"',
+            _statusName(deposit.status),
+            '"},',
+            '{"trait_type":"Transfer Policy","value":"Marketplace only"}',
+            "]}"
+        );
+
+        return string.concat("data:application/json;base64,", Base64.encode(json));
+    }
+
+    /**
+     * @dev Formats a 6-decimal token amount for display in NFT metadata.
+     */
+    function _formatUsdc(uint256 amount) private pure returns (string memory) {
+        uint256 whole = amount / 1e6;
+        uint256 fractional = amount % 1e6;
+        return string.concat(whole.toString(), ".", _sixDigitFraction(fractional), " USDC");
+    }
+
+    /**
+     * @dev Formats basis points as a percentage string with two decimal places.
+     */
+    function _formatBps(uint16 bps) private pure returns (string memory) {
+        uint256 whole = uint256(bps) / 100;
+        uint256 fractional = uint256(bps) % 100;
+        return string.concat(whole.toString(), ".", fractional < 10 ? "0" : "", fractional.toString(), "%");
+    }
+
+    /**
+     * @dev Left-pads a 6-decimal fractional token amount.
+     */
+    function _sixDigitFraction(uint256 value) private pure returns (string memory) {
+        string memory digits = value.toString();
+        if (value >= 100_000) return digits;
+        if (value >= 10_000) return string.concat("0", digits);
+        if (value >= 1_000) return string.concat("00", digits);
+        if (value >= 100) return string.concat("000", digits);
+        if (value >= 10) return string.concat("0000", digits);
+        return string.concat("00000", digits);
+    }
+
+    /**
+     * @dev Returns a human-readable deposit lifecycle status for NFT metadata.
+     */
+    function _statusName(DepositStatus status) private pure returns (string memory) {
+        string[6] memory statusNames = ["None", "Active", "Withdrawn", "Early Withdrawn", "Manual Renewed", "Auto Renewed"];
+        return statusNames[uint256(status)];
     }
 
     /**
@@ -741,12 +868,13 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /**
      * @notice Calculates simple interest for a deposit using its opening APR snapshot and locked tenor.
-     * @param deposit Deposit metadata to calculate against.
+     * @param principal Principal amount used for interest calculation.
+     * @param aprBps APR snapshot in basis points.
+     * @param tenorSeconds Deposit duration in seconds.
      * @return interest Simple interest amount owed for the deposit tenor.
      */
-    function _calculateInterest(DepositInfo storage deposit) private view returns (uint256 interest) {
-        uint256 tenorSeconds = uint256(deposit.maturityAt) - deposit.startAt;
-        interest = (deposit.principal * deposit.aprBpsAtOpen * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
+    function _calculateInterest(uint256 principal, uint16 aprBps, uint256 tenorSeconds) private pure returns (uint256 interest) {
+        interest = (principal * aprBps * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
     }
 
     /**

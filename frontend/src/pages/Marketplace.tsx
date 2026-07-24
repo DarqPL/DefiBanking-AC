@@ -279,6 +279,10 @@ function TermsPanel({ currentTermsHash }: { currentTermsHash: string }) {
           Direct wallet-to-wallet NFT transfers outside this marketplace are rejected by SavingCore and do not change deposit ownership.
         </p>
         <p>
+          NFT name, image, description, and attributes are informational metadata only. Deposit rights, principal, APR, maturity, and ownership
+          are determined by SavingCore contract state.
+        </p>
+        <p>
           The seller receives the listed USDC sale price when a purchase transaction succeeds. The protocol does not guarantee that the sale
           price equals the deposit principal, accrued interest, fair market value, or expected maturity value.
         </p>

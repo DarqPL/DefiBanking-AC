@@ -9,6 +9,8 @@
     "node": "hardhat node",
     "size": "hardhat size-contracts",
     "clean": "hardhat clean",
+    "deploy:sepolia": "hardhat run scripts/deployAndVerify.ts --network sepolia",
+    "verify:sepolia": "hardhat run scripts/verifyDeployments.ts --network sepolia",
     "run:sepolia": "hardhat run --network sepolia",
     "bot:auto-renew:sepolia": "hardhat run scripts/autoRenewBot.ts --network sepolia",
     "run:ethereum": "hardhat run --network ethereum"

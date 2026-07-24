@@ -42,6 +42,7 @@ Student ID ending used for this project: `71`.
 
 - Creates, updates, enables, and disables saving plans.
 - Opens deposits and mints ERC721 certificate NFTs.
+- Serves dynamic on-chain JSON metadata through `tokenURI(depositId)` so wallets can show a certificate name, image, and live deposit attributes.
 - Stores APR and penalty snapshots per deposit.
 - Handles maturity withdrawal, early withdrawal, manual renewal, and auto-renewal.
 - Holds user principal separately from the vault interest pool.
@@ -167,6 +168,25 @@ The owner/admin can:
 - Pause and unpause `SavingCore`.
 - Pause and unpause `VaultManager`.
 
+## NFT Metadata
+
+Deposit NFTs use dynamic on-chain ERC721 metadata. `SavingCore.tokenURI(depositId)` returns a Base64 JSON data URI generated from `deposits(depositId)`, so you do not need one JSON file per NFT.
+
+```text
+data:application/json;base64,...
+```
+
+The JSON includes:
+
+- NFT name such as `DeFi Saving Deposit #0`.
+- Description of the marketplace-only transfer policy.
+- One shared IPFS certificate image from `metadataImageURI`.
+- Deposit attributes such as principal, APR, maturity timestamp, status, and transfer policy.
+
+The owner only needs to upload the certificate image to IPFS and call `setMetadataImageURI(string)`. After the image is verified in MetaMask or an NFT viewer, the owner can call `lockMetadata()` to permanently prevent future image URI changes.
+
+Metadata is display-only. Real deposit ownership and rights still come from `ownerOf(depositId)` and `deposits(depositId)`. See `docs/NFT_METADATA_SETUP.md` for the full image upload and setup checklist.
+
 ## Setup
 
 Install root dependencies:
@@ -233,7 +253,13 @@ npx hardhat deploy --network localhost
 Deploy to Sepolia:
 
 ```bash
-npx hardhat deploy --network sepolia
+npm run deploy:sepolia
+```
+
+The Sepolia deploy command runs `hardhat deploy` and then verifies the deployed contracts on Etherscan. If Etherscan indexing is delayed, rerun verification without redeploying:
+
+```bash
+npm run verify:sepolia
 ```
 
 Required or supported environment variables are documented in `.env_example`:

@@ -1,0 +1,13 @@
+[
+    {
+        "inputs": [
+            {
+                "internalType": "bytes1",
+                "name": "",
+                "type": "bytes1"
+            }
+        ],
+        "name": "InvalidBase64Char",
+        "type": "error"
+    }
+]

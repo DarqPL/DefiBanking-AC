@@ -53,6 +53,12 @@ describe("SavingCore", function () {
       .filter((name: string | undefined) => name !== undefined);
   }
 
+  async function decodedMetadata(savingCore: any, depositId: bigint | number) {
+    const tokenURI = await savingCore.tokenURI(depositId);
+    expect(tokenURI.startsWith("data:application/json;base64,")).to.equal(true);
+    return JSON.parse(Buffer.from(tokenURI.split(",")[1], "base64").toString("utf8"));
+  }
+
   async function deploySavingCoreFixture() {
     const [deployer, feeReceiver, user, other, bot] = await ethers.getSigners();
 
@@ -175,6 +181,81 @@ describe("SavingCore", function () {
 
       await savingCore.setDepositMarketplace(other.address);
       expect(await savingCore.depositMarketplace()).to.equal(other.address);
+    });
+
+    it("generates dynamic NFT metadata and permanently locks the image URI", async function () {
+      const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      const firstImageURI = "ipfs://bafybeifirst/deposit-certificate.png";
+      const secondImageURI = "ipfs://bafybeisecond/deposit-certificate.png";
+
+      await openDefaultDeposit();
+      expect(await savingCore.metadataImageURI()).to.equal("");
+
+      await expectCustomError(
+        savingCore.connect(other).setMetadataImageURI.staticCall(firstImageURI),
+        savingCore.interface,
+        "OwnableUnauthorizedAccount",
+      );
+
+      await savingCore.setMetadataImageURI(firstImageURI);
+      expect(await savingCore.metadataImageURI()).to.equal(firstImageURI);
+
+      const metadata = await decodedMetadata(savingCore, 0);
+      expect(metadata.name).to.equal("DeFi Saving Deposit #0");
+      expect(metadata.image).to.equal(firstImageURI);
+      expect(metadata.description).to.include("Soulbound DeFi term-deposit certificate");
+      expect(metadata.attributes).to.deep.include({ trait_type: "Principal", value: "1000.000000 USDC" });
+      expect(metadata.attributes).to.deep.include({ trait_type: "APR", value: "2.25%" });
+      expect(metadata.attributes).to.deep.include({ trait_type: "Status", value: "Active" });
+      expect(metadata.attributes).to.deep.include({ trait_type: "Transfer Policy", value: "Marketplace only" });
+
+      await savingCore.setMetadataImageURI(secondImageURI);
+      const updatedMetadata = await decodedMetadata(savingCore, 0);
+      expect(updatedMetadata.image).to.equal(secondImageURI);
+
+      await expectCustomError(savingCore.connect(user).lockMetadata.staticCall(), savingCore.interface, "OwnableUnauthorizedAccount");
+      await savingCore.lockMetadata();
+      expect(await savingCore.metadataLocked()).to.equal(true);
+      await expectCustomError(savingCore.setMetadataImageURI.staticCall(firstImageURI), savingCore.interface, "MetadataLocked");
+
+      await expectCustomError(savingCore.tokenURI.staticCall(99), savingCore.interface, "ERC721NonexistentToken");
+    });
+
+    it("formats dynamic NFT metadata for USDC fractions and renewed statuses", async function () {
+      const { user, mockUSDC, vaultAddress, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
+      const amounts = [1_000_123_456n, 1_000_012_345n, 1_000_001_234n, 1_000_000_123n, 1_000_000_012n, 1_000_000_001n];
+
+      await mockUSDC.connect(user).approve(savingCoreAddress, amounts.reduce((total, amount) => total + amount, 0n));
+      for (const amount of amounts) {
+        await savingCore.connect(user).openDeposit(0, amount);
+      }
+
+      const expectedPrincipals = [
+        "1000.123456 USDC",
+        "1000.012345 USDC",
+        "1000.001234 USDC",
+        "1000.000123 USDC",
+        "1000.000012 USDC",
+        "1000.000001 USDC",
+      ];
+
+      for (let index = 0; index < expectedPrincipals.length; index += 1) {
+        const metadata = await decodedMetadata(savingCore, index);
+        expect(metadata.attributes).to.deep.include({ trait_type: "Principal", value: expectedPrincipals[index] });
+      }
+
+      await openDefaultDeposit();
+      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await time.increase(Number(tenorSeconds));
+      await savingCore.connect(user).renewDeposit(6, 1);
+      expect((await decodedMetadata(savingCore, 6)).attributes).to.deep.include({ trait_type: "Status", value: "Manual Renewed" });
+
+      await mockUSDC.approve(vaultAddress, vaultFunds);
+      await openDefaultDeposit();
+      const autoDepositId = (await savingCore.nextDepositId()) - 1n;
+      await time.increase(Number(tenorSeconds + autoRenewGracePeriod));
+      await savingCore.autoRenewDeposit(autoDepositId);
+      expect((await decodedMetadata(savingCore, autoDepositId)).attributes).to.deep.include({ trait_type: "Status", value: "Auto Renewed" });
     });
 
     it("allows zero min or max deposit limits to mean no limit", async function () {

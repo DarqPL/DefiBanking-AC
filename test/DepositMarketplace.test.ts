@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { time } from "@nomicfoundation/hardhat-network-helpers";
+import { impersonateAccount, setBalance, time } from "@nomicfoundation/hardhat-network-helpers";
 
 describe("DepositMarketplace", function () {
   const oneUsdc = 10n ** 6n;
@@ -424,6 +424,38 @@ describe("DepositMarketplace", function () {
       );
       expect(await savingCore.ownerOf(depositId)).to.equal(seller.address);
       expect(await marketplace.listedCount()).to.equal(0n);
+    });
+
+    it("recovers an unlisted escrowed NFT and rejects invalid recovery attempts", async function () {
+      const { seller, buyer, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
+      const depositId = await openDeposit();
+
+      await savingCore.connect(seller).approve(marketplaceAddress, depositId);
+      await impersonateAccount(marketplaceAddress);
+      await setBalance(marketplaceAddress, 10n ** 18n);
+      const marketplaceSigner = await ethers.getSigner(marketplaceAddress);
+      await savingCore.connect(marketplaceSigner).transferFrom(seller.address, marketplaceAddress, depositId);
+
+      await expectCustomError(
+        marketplace.connect(buyer).recoverUnlistedDeposit.staticCall(depositId, seller.address),
+        marketplace.interface,
+        "OwnableUnauthorizedAccount",
+      );
+      await expectCustomError(
+        marketplace.recoverUnlistedDeposit.staticCall(depositId, ethers.ZeroAddress),
+        marketplace.interface,
+        "InvalidAddress",
+      );
+
+      await marketplace.recoverUnlistedDeposit(depositId, seller.address);
+      expect(await savingCore.ownerOf(depositId)).to.equal(seller.address);
+
+      await listDeposit(depositId);
+      await expectCustomError(
+        marketplace.recoverUnlistedDeposit.staticCall(depositId, seller.address),
+        marketplace.interface,
+        "AlreadyListed",
+      );
     });
 
     it("rejects recovery when the marketplace does not hold the NFT", async function () {
