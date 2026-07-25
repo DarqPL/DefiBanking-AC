@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
+import { ConfirmationDialog } from "../components/ConfirmationDialog";
+import { ToastStack, type ToastItem } from "../components/ToastStack";
 
 type DepositInfo = {
   id: bigint;
@@ -21,6 +23,14 @@ type MarketplaceListing = {
   seller: string;
   price: bigint;
   deposit: DepositInfo;
+};
+
+type ConfirmationState = {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  tone?: "default" | "danger";
+  details?: { label: string; value: string }[];
 };
 
 const CHUNK_SIZE = 2_000;
@@ -355,14 +365,43 @@ export default function Marketplace() {
   const [txStatus, setTxStatus] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
+  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => new Set());
+  const confirmedActionRef = useRef<() => void>(() => undefined);
 
   const isBusy = isLoading || txStatus.length > 0;
   const publicListings = listings.filter((listing) => !isSameAddress(listing.seller, account));
   const totalListingPages = Math.max(1, Math.ceil(totalListingCount / LISTINGS_PAGE_SIZE));
-
   const parseError = useCallback((error: unknown) => {
     return parseTransactionError(error, savingCore, null, mockUSDC, depositMarketplace);
   }, [depositMarketplace, mockUSDC, savingCore]);
+
+  const requestConfirmation = useCallback((nextConfirmation: ConfirmationState, action: () => void) => {
+    confirmedActionRef.current = action;
+    setConfirmation(nextConfirmation);
+  }, []);
+
+  const cancelConfirmation = useCallback(() => {
+    setConfirmation(null);
+    confirmedActionRef.current = () => undefined;
+  }, []);
+
+  const confirmRequestedAction = useCallback(() => {
+    const action = confirmedActionRef.current;
+    setConfirmation(null);
+    confirmedActionRef.current = () => undefined;
+    action();
+  }, []);
+
+  const visibleToastItems: ToastItem[] = [
+    ...(txStatus ? [{ id: `status:${txStatus}`, message: txStatus, tone: "status" as const }] : []),
+    ...(successMessage ? [{ id: `success:${successMessage}`, message: successMessage, tone: "success" as const }] : []),
+    ...(errorMessage ? [{ id: `error:${errorMessage}`, message: errorMessage, tone: "error" as const }] : []),
+  ].filter((item) => !dismissedToastIds.has(item.id));
+
+  const dismissToast = useCallback((id: string) => {
+    setDismissedToastIds((current) => new Set(current).add(id));
+  }, []);
 
   const refreshMarketplace = useCallback(async () => {
     if (!savingCore || !depositMarketplace) return;
@@ -470,6 +509,7 @@ export default function Marketplace() {
     setTxStatus(label);
     setErrorMessage("");
     setSuccessMessage("");
+    setDismissedToastIds(new Set());
 
     try {
       const tx = await action();
@@ -493,6 +533,7 @@ export default function Marketplace() {
     setTxStatus("Checking USDC allowance...");
     setErrorMessage("");
     setSuccessMessage("");
+    setDismissedToastIds(new Set());
 
     try {
       const allowance = (await mockUSDC.allowance(account, CONTRACT_ADDRESSES.DepositMarketplace)) as bigint;
@@ -526,6 +567,7 @@ export default function Marketplace() {
     setTxStatus("Checking NFT approval...");
     setErrorMessage("");
     setSuccessMessage("");
+    setDismissedToastIds(new Set());
 
     try {
       const [approvedAddress, isApprovedForAll] = await Promise.all([
@@ -571,16 +613,13 @@ export default function Marketplace() {
   return (
     <div className="dashboard-grid">
       <section className="page-card dashboard-hero">
-        <p className="eyebrow">Marketplace</p>
-        <h1>Deposit NFT Marketplace</h1>
-        <p>List eligible deposit NFTs or buy active deposit positions escrowed by the marketplace contract.</p>
+        <p className="eyebrow">Defi Banking Marketplace</p>
+        <h1>Trade active savings certificates safely</h1>
+        <p>List eligible deposit certificates into escrow or buy active positions with future withdrawal and renewal rights.</p>
       </section>
 
       {!account && <p className="status-message">Connect your wallet to list or purchase deposit NFTs.</p>}
       {isLoading && <p className="status-message">Loading marketplace data...</p>}
-      {txStatus && <p className="status-message">{txStatus}</p>}
-      {successMessage && <p className="success-message">{successMessage}</p>}
-      {errorMessage && <p className="error-message">{errorMessage}</p>}
 
       <section className="section-panel">
         <div className="section-header">
@@ -607,7 +646,24 @@ export default function Marketplace() {
                 now={now}
                 account={account}
                 isBusy={isBusy}
-                onBuy={(nextDepositId) => void handleBuy(nextDepositId)}
+                onBuy={(nextDepositId) => {
+                  const selectedListing = listings.find((item) => item.depositId === nextDepositId);
+                  requestConfirmation(
+                    {
+                      title: "Buy this savings certificate?",
+                      description: "You will approve MockUSDC if needed, then receive the escrowed deposit NFT and future deposit-owner rights.",
+                      confirmLabel: "Buy Certificate",
+                      details: selectedListing
+                        ? [
+                            { label: "Deposit", value: `#${selectedListing.depositId.toString()}` },
+                            { label: "Price", value: formatUsdc(selectedListing.price) },
+                            { label: "Principal", value: formatUsdc(selectedListing.deposit.principal) },
+                          ]
+                        : undefined,
+                    },
+                    () => void handleBuy(nextDepositId)
+                  );
+                }}
               />
             ))
           )}
@@ -635,7 +691,25 @@ export default function Marketplace() {
                 onAcceptedTermsChange={(nextDepositId, accepted) =>
                   setAcceptedTermsByDeposit((current) => ({ ...current, [nextDepositId]: accepted }))
                 }
-                onList={(nextDepositId) => void handleList(nextDepositId)}
+                onList={(nextDepositId) => {
+                  const deposit = listableDeposits.find((item) => item.id === nextDepositId);
+                  const price = pricesByDeposit[nextDepositId.toString()] ?? "";
+                  requestConfirmation(
+                    {
+                      title: "List this certificate?",
+                      description: "The marketplace will hold your deposit NFT in escrow. You cannot withdraw or renew it while it is listed.",
+                      confirmLabel: "List Certificate",
+                      details: deposit
+                        ? [
+                            { label: "Deposit", value: `#${deposit.id.toString()}` },
+                            { label: "Principal", value: formatUsdc(deposit.principal) },
+                            { label: "Sale price", value: `${price} USDC` },
+                          ]
+                        : undefined,
+                    },
+                    () => void handleList(nextDepositId)
+                  );
+                }}
               />
             ))
           )}
@@ -658,7 +732,23 @@ export default function Marketplace() {
                 now={now}
                 account={account}
                 isBusy={isBusy}
-                onCancel={handleCancel}
+                onCancel={(nextDepositId) => {
+                  const selectedListing = myListings.find((item) => item.depositId === nextDepositId);
+                  requestConfirmation(
+                    {
+                      title: "Cancel this listing?",
+                      description: "The marketplace will return the escrowed savings certificate to your wallet.",
+                      confirmLabel: "Cancel Listing",
+                      details: selectedListing
+                        ? [
+                            { label: "Deposit", value: `#${selectedListing.depositId.toString()}` },
+                            { label: "Listed price", value: formatUsdc(selectedListing.price) },
+                          ]
+                        : undefined,
+                    },
+                    () => handleCancel(nextDepositId)
+                  );
+                }}
               />
             ))
           )}
@@ -666,6 +756,28 @@ export default function Marketplace() {
       </section>
 
       <TermsPanel currentTermsHash={currentTermsHash} />
+
+      <ConfirmationDialog
+        open={confirmation !== null}
+        title={confirmation?.title ?? "Review action"}
+        description={confirmation?.description}
+        confirmLabel={confirmation?.confirmLabel}
+        tone={confirmation?.tone}
+        onCancel={cancelConfirmation}
+        onConfirm={confirmRequestedAction}
+      >
+        {confirmation?.details && (
+          <dl>
+            {confirmation.details.map((detail) => (
+              <div key={detail.label}>
+                <dt>{detail.label}</dt>
+                <dd>{detail.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </ConfirmationDialog>
+      <ToastStack items={visibleToastItems} onDismiss={dismissToast} />
     </div>
   );
 }

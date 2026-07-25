@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
+import { ConfirmationDialog } from "../components/ConfirmationDialog";
+import { ToastStack, type ToastItem } from "../components/ToastStack";
 
 type SavingPlan = {
   id: bigint;
@@ -30,6 +32,14 @@ type DepositInfo = {
   canPayInterest: boolean;
 };
 
+type ConfirmationState = {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  tone?: "default" | "danger";
+  details?: { label: string; value: string }[];
+};
+
 const DEPOSIT_STATUS: Record<string, string> = {
   "0": "None",
   "1": "Active",
@@ -40,6 +50,7 @@ const DEPOSIT_STATUS: Record<string, string> = {
 };
 
 const CHUNK_SIZE = 2_000;
+const FAUCET_AMOUNT = ethers.parseUnits("1000", 6);
 
 function formatUsdc(value: bigint) {
   return `${ethers.formatUnits(value, 6)} USDC`;
@@ -429,13 +440,48 @@ export default function UserDashboard() {
   const [txStatus, setTxStatus] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [alertMessage, setAlertMessage] = useState("");
+  const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
+  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => new Set());
+  const confirmedActionRef = useRef<() => void>(() => undefined);
 
   const activePlans = useMemo(() => plans.filter((plan) => plan.enabled), [plans]);
+  const selectedPlan = useMemo(
+    () => activePlans.find((plan) => plan.id.toString() === selectedPlanId),
+    [activePlans, selectedPlanId]
+  );
   const deferredInterestDeposits = useMemo(
     () => historyDeposits.filter((deposit) => deposit.unpaidInterest > 0n && isSameAddress(deposit.interestClaimant, account)),
     [account, historyDeposits]
   );
   const isTxBusy = txStatus.length > 0;
+  const toastItems = useMemo<ToastItem[]>(() => {
+    const items: ToastItem[] = [];
+    if (txStatus) items.push({ id: `status:${txStatus}`, message: txStatus, tone: "status" });
+    if (alertMessage) items.push({ id: `success:${alertMessage}`, message: alertMessage, tone: "success" });
+    if (errorMessage) items.push({ id: `error:${errorMessage}`, message: errorMessage, tone: "error" });
+    return items.filter((item) => !dismissedToastIds.has(item.id));
+  }, [alertMessage, dismissedToastIds, errorMessage, txStatus]);
+
+  const requestConfirmation = useCallback((nextConfirmation: ConfirmationState, action: () => void) => {
+    confirmedActionRef.current = action;
+    setConfirmation(nextConfirmation);
+  }, []);
+
+  const cancelConfirmation = useCallback(() => {
+    setConfirmation(null);
+    confirmedActionRef.current = () => undefined;
+  }, []);
+
+  const confirmRequestedAction = useCallback(() => {
+    const action = confirmedActionRef.current;
+    setConfirmation(null);
+    confirmedActionRef.current = () => undefined;
+    action();
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setDismissedToastIds((current) => new Set(current).add(id));
+  }, []);
 
   const parseError = useCallback((error: unknown) => {
     return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
@@ -562,6 +608,7 @@ export default function UserDashboard() {
   ) => {
     setErrorMessage("");
     setAlertMessage("");
+    setDismissedToastIds(new Set());
     setTxStatus(label);
 
     try {
@@ -582,6 +629,7 @@ export default function UserDashboard() {
 
     setErrorMessage("");
     setAlertMessage("");
+    setDismissedToastIds(new Set());
     setTxStatus("Withdrawing at maturity...");
 
     try {
@@ -610,6 +658,7 @@ export default function UserDashboard() {
     const savingCoreAddress = CONTRACT_ADDRESSES.SavingCore;
 
     setErrorMessage("");
+    setDismissedToastIds(new Set());
     setTxStatus("Checking allowance...");
 
     try {
@@ -640,6 +689,16 @@ export default function UserDashboard() {
     }
   }
 
+  function handleMintMockUsdc() {
+    if (!account || !mockUSDC) return;
+
+    void runTransaction(
+      "Minting test MockUSDC...",
+      () => mockUSDC.mint(account, FAUCET_AMOUNT) as Promise<ethers.TransactionResponse>,
+      "1,000 test MockUSDC minted to your wallet."
+    );
+  }
+
   function handleRenewPlanChange(depositId: string, planId: string) {
     setRenewPlanByDeposit((current) => ({ ...current, [depositId]: planId }));
   }
@@ -650,11 +709,26 @@ export default function UserDashboard() {
     const fallbackPlanId = activePlans[0]?.id.toString();
     const selectedRenewPlanId = renewPlanByDeposit[depositId.toString()] ?? fallbackPlanId;
     if (!selectedRenewPlanId) return;
+    const deposit = activeDeposits.find((item) => item.id === depositId);
+    const renewPlan = activePlans.find((plan) => plan.id.toString() === selectedRenewPlanId);
 
-    void runTransaction(
-      "Renewing...",
-      () => savingCore.renewDeposit(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>,
-      "Deposit renewed successfully."
+    requestConfirmation(
+      {
+        title: "Compound renew this certificate?",
+        description: "Earned interest will be paid from the vault into SavingCore and added to your new principal.",
+        confirmLabel: "Renew Deposit",
+        details: [
+          { label: "Deposit", value: `#${depositId.toString()}` },
+          { label: "New plan", value: renewPlan ? `#${renewPlan.id.toString()} · ${renewPlan.tenorDays.toString()} days` : `#${selectedRenewPlanId}` },
+          ...(deposit ? [{ label: "Estimated new principal", value: formatUsdc(deposit.principal + calculateInterest(deposit)) }] : []),
+        ],
+      },
+      () =>
+        void runTransaction(
+          "Renewing...",
+          () => savingCore.renewDeposit(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>,
+          "Deposit renewed successfully."
+        )
     );
   }
 
@@ -664,31 +738,82 @@ export default function UserDashboard() {
     const fallbackPlanId = activePlans[0]?.id.toString();
     const selectedRenewPlanId = renewPlanByDeposit[depositId.toString()] ?? fallbackPlanId;
     if (!selectedRenewPlanId) return;
+    const deposit = activeDeposits.find((item) => item.id === depositId);
+    const renewPlan = activePlans.find((plan) => plan.id.toString() === selectedRenewPlanId);
 
-    void runTransaction(
-      "Withdrawing interest and renewing principal...",
-      () => savingCore.withdrawInterestAndRenewPrincipal(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>,
-      "Interest withdrawn and principal renewed successfully."
+    requestConfirmation(
+      {
+        title: "Withdraw interest and continue principal?",
+        description: "Your earned interest is paid to your wallet, while the original principal opens a new certificate.",
+        confirmLabel: "Continue",
+        details: [
+          { label: "Deposit", value: `#${depositId.toString()}` },
+          { label: "New plan", value: renewPlan ? `#${renewPlan.id.toString()} · ${renewPlan.tenorDays.toString()} days` : `#${selectedRenewPlanId}` },
+          ...(deposit
+            ? [
+                { label: "Interest payout", value: formatUsdc(calculateInterest(deposit)) },
+                { label: "Renewed principal", value: formatUsdc(deposit.principal) },
+              ]
+            : []),
+        ],
+      },
+      () =>
+        void runTransaction(
+          "Withdrawing interest and renewing principal...",
+          () => savingCore.withdrawInterestAndRenewPrincipal(depositId, BigInt(selectedRenewPlanId)) as Promise<ethers.TransactionResponse>,
+          "Interest withdrawn and principal renewed successfully."
+        )
     );
   }
 
   function handleClaimInterest(depositId: bigint) {
     if (!savingCore) return;
+    const deposit = deferredInterestDeposits.find((item) => item.id === depositId) ?? historyDeposits.find((item) => item.id === depositId);
 
-    void runTransaction(
-      "Claiming deferred interest...",
-      () => savingCore.claimInterest(depositId) as Promise<ethers.TransactionResponse>,
-      "Deferred interest claimed successfully."
+    requestConfirmation(
+      {
+        title: "Claim deferred interest?",
+        description: "This checks vault liquidity on-chain and pays the unpaid interest for this closed certificate if available.",
+        confirmLabel: "Claim Interest",
+        details: deposit
+          ? [
+              { label: "Deposit", value: `#${deposit.id.toString()}` },
+              { label: "Claim amount", value: formatUsdc(deposit.unpaidInterest) },
+            ]
+          : undefined,
+      },
+      () =>
+        void runTransaction(
+          "Claiming deferred interest...",
+          () => savingCore.claimInterest(depositId) as Promise<ethers.TransactionResponse>,
+          "Deferred interest claimed successfully."
+        )
     );
   }
 
   function handleEmergencyWithdrawPrincipal(depositId: bigint) {
     if (!savingCore) return;
+    const deposit = activeDeposits.find((item) => item.id === depositId);
 
-    void runTransaction(
-      "Emergency withdrawing principal...",
-      () => savingCore.emergencyWithdrawPrincipal(depositId) as Promise<ethers.TransactionResponse>,
-      "Emergency principal withdrawal confirmed. Interest was not paid for this emergency exit."
+    requestConfirmation(
+      {
+        title: "Emergency withdraw principal?",
+        description: "This is only for paused emergency mode. It returns principal, closes the certificate, and pays no interest or penalty.",
+        confirmLabel: "Withdraw Principal",
+        tone: "danger",
+        details: deposit
+          ? [
+              { label: "Deposit", value: `#${deposit.id.toString()}` },
+              { label: "Principal", value: formatUsdc(deposit.principal) },
+            ]
+          : undefined,
+      },
+      () =>
+        void runTransaction(
+          "Emergency withdrawing principal...",
+          () => savingCore.emergencyWithdrawPrincipal(depositId) as Promise<ethers.TransactionResponse>,
+          "Emergency principal withdrawal confirmed. Interest was not paid for this emergency exit."
+        )
     );
   }
 
@@ -699,23 +824,34 @@ export default function UserDashboard() {
   return (
     <div className="dashboard-grid">
       <section className="page-card dashboard-hero">
-        <p className="eyebrow">User Dashboard</p>
-        <h1>Term Deposit Portal</h1>
-        <p>Open fixed-term USDC deposits, monitor live status, and manage maturity actions from one place.</p>
+        <p className="eyebrow">Defi Banking</p>
+        <h1>Savings certificates for your Sepolia demo wallet</h1>
+        <p>Open fixed-term MockUSDC savings, receive an on-chain deposit certificate, and manage withdrawals, renewals, and marketplace-ready positions.</p>
       </section>
 
       {!account && (
         <p className="status-message">Connect your wallet to open deposits and view your deposit history.</p>
       )}
       {isLoading && <p className="status-message">Loading contract data...</p>}
-      {txStatus && <p className="status-message">{txStatus}</p>}
-      {alertMessage && <p className="success-message">{alertMessage}</p>}
-      {errorMessage && <p className="error-message">{errorMessage}</p>}
       {savingCorePaused && account && (
         <p className="deferred-warning">
           SavingCore is paused. Normal deposit, withdrawal, and renewal actions are disabled. Active NFT owners can use emergency principal withdrawal.
         </p>
       )}
+
+      <section className="section-panel">
+        <div className="section-header">
+          <p className="eyebrow">Test Token Faucet</p>
+          <h2>Get demo MockUSDC</h2>
+          <p>MockUSDC is a freely mintable Sepolia test token for this coursework demo. It has no real-world monetary value.</p>
+        </div>
+        <div className="action-row">
+          <button className="primary-button" type="button" onClick={handleMintMockUsdc} disabled={!account || isTxBusy || !mockUSDC}>
+            Mint 1,000 MockUSDC
+          </button>
+          {!account && <p className="helper-text">Connect your wallet first, then mint test tokens for opening a savings certificate.</p>}
+        </div>
+      </section>
 
       <section className="section-panel">
         <div className="section-header">
@@ -744,7 +880,22 @@ export default function UserDashboard() {
         isBusy={isTxBusy || !account || savingCorePaused}
         onPlanChange={setSelectedPlanId}
         onAmountChange={setDepositAmountInput}
-        onSubmit={() => void handleOpenDeposit()}
+        onSubmit={() => {
+          if (!selectedPlan || !depositAmountInput) return;
+          requestConfirmation(
+            {
+              title: "Open savings certificate?",
+              description: "Your wallet will approve MockUSDC if needed, then open a fixed-term deposit certificate.",
+              confirmLabel: "Open Deposit",
+              details: [
+                { label: "Plan", value: `#${selectedPlan.id.toString()} · ${selectedPlan.tenorDays.toString()} days` },
+                { label: "APR", value: formatApr(selectedPlan.aprBps) },
+                { label: "Amount", value: `${depositAmountInput} USDC` },
+              ],
+            },
+            () => void handleOpenDeposit()
+          );
+        }}
       />
 
       <section className="section-panel">
@@ -770,13 +921,47 @@ export default function UserDashboard() {
                 isBusy={isTxBusy}
                 renewPlanId={renewPlanByDeposit[deposit.id.toString()] ?? activePlans[0]?.id.toString() ?? ""}
                 onRenewPlanChange={handleRenewPlanChange}
-                onEarlyWithdraw={(depositId) =>
-                  void runTransaction(
-                    "Withdrawing early...",
-                    () => savingCore?.earlyWithdraw(depositId) as Promise<ethers.TransactionResponse>
-                  )
-                }
-                onWithdraw={(depositId) => void handleMaturityWithdraw(depositId)}
+                onEarlyWithdraw={(depositId) => {
+                  const deposit = activeDeposits.find((item) => item.id === depositId);
+                  requestConfirmation(
+                    {
+                      title: "Withdraw early?",
+                      description: "Early withdrawal closes this certificate, pays no interest, and charges the configured penalty.",
+                      confirmLabel: "Withdraw Early",
+                      tone: "danger",
+                      details: deposit
+                        ? [
+                            { label: "Deposit", value: `#${deposit.id.toString()}` },
+                            { label: "Principal", value: formatUsdc(deposit.principal) },
+                            { label: "Penalty", value: formatApr(deposit.penaltyBpsAtOpen) },
+                          ]
+                        : undefined,
+                    },
+                    () =>
+                      void runTransaction(
+                        "Withdrawing early...",
+                        () => savingCore?.earlyWithdraw(depositId) as Promise<ethers.TransactionResponse>
+                      )
+                  );
+                }}
+                onWithdraw={(depositId) => {
+                  const deposit = activeDeposits.find((item) => item.id === depositId);
+                  requestConfirmation(
+                    {
+                      title: "Withdraw matured savings?",
+                      description: "You will receive principal now. If the vault cannot pay interest, unpaid interest is recorded as a later claim.",
+                      confirmLabel: "Withdraw",
+                      details: deposit
+                        ? [
+                            { label: "Deposit", value: `#${deposit.id.toString()}` },
+                            { label: "Principal", value: formatUsdc(deposit.principal) },
+                            { label: "Estimated interest", value: formatUsdc(calculateInterest(deposit)) },
+                          ]
+                        : undefined,
+                    },
+                    () => void handleMaturityWithdraw(depositId)
+                  );
+                }}
                 onEmergencyWithdraw={handleEmergencyWithdrawPrincipal}
                 onRenew={handleRenew}
                 onWithdrawInterestAndRenew={handleWithdrawInterestAndRenew}
@@ -852,6 +1037,28 @@ export default function UserDashboard() {
           </div>
         </section>
       )}
+
+      <ConfirmationDialog
+        open={confirmation !== null}
+        title={confirmation?.title ?? "Review action"}
+        description={confirmation?.description}
+        confirmLabel={confirmation?.confirmLabel}
+        tone={confirmation?.tone}
+        onCancel={cancelConfirmation}
+        onConfirm={confirmRequestedAction}
+      >
+        {confirmation?.details && (
+          <dl>
+            {confirmation.details.map((detail) => (
+              <div key={detail.label}>
+                <dt>{detail.label}</dt>
+                <dd>{detail.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </ConfirmationDialog>
+      <ToastStack items={toastItems} onDismiss={dismissToast} />
     </div>
   );
 }

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { Link } from "react-router-dom";
-import { CONTRACT_ADDRESSES } from "../config";
+import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
+import { ConfirmationDialog } from "../components/ConfirmationDialog";
+import { ToastStack, type ToastItem } from "../components/ToastStack";
 
 type SavingPlan = {
   id: bigint;
@@ -24,6 +26,44 @@ type CreatePlanForm = {
   enabled: boolean;
 };
 
+type AdminDepositInfo = {
+  id: bigint;
+  planId: bigint;
+  principal: bigint;
+  startAt: bigint;
+  maturityAt: bigint;
+  aprBpsAtOpen: bigint;
+  penaltyBpsAtOpen: bigint;
+  status: bigint;
+  owner: string | null;
+  unpaidInterest: bigint;
+  interestClaimant: string | null;
+};
+
+type DepositFilter = "all" | "active" | "withdrawn" | "early" | "manual" | "auto" | "deferred" | "escrowed";
+
+type AuditFilter = "all" | "plans" | "vault" | "admin" | "marketplace";
+
+type AuditLogEntry = {
+  id: string;
+  category: Exclude<AuditFilter, "all">;
+  contractName: string;
+  action: string;
+  summary: string;
+  blockNumber: number;
+  transactionHash: string;
+  logIndex: number;
+  actor: string | null;
+};
+
+type ConfirmationState = {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  tone?: "default" | "danger";
+  details?: { label: string; value: string }[];
+};
+
 const defaultCreatePlanForm: CreatePlanForm = {
   tenorDays: "180",
   aprPercent: "2.25",
@@ -31,6 +71,37 @@ const defaultCreatePlanForm: CreatePlanForm = {
   maxDeposit: "10000",
   penaltyPercent: "6.5",
   enabled: true,
+};
+
+const ADMIN_PAGE_SIZE = 5;
+const CHUNK_SIZE = 2_000;
+
+const DEPOSIT_STATUS_LABELS: Record<string, string> = {
+  "0": "None",
+  "1": "Active",
+  "2": "Withdrawn",
+  "3": "Early Withdrawn",
+  "4": "Manual Renewed",
+  "5": "Auto Renewed",
+};
+
+const DEPOSIT_FILTER_LABELS: Record<DepositFilter, string> = {
+  all: "All deposits",
+  active: "Active",
+  withdrawn: "Withdrawn",
+  early: "Early Withdrawn",
+  manual: "Manual Renewed",
+  auto: "Auto Renewed",
+  deferred: "Deferred Interest",
+  escrowed: "Marketplace Escrowed",
+};
+
+const AUDIT_FILTER_LABELS: Record<AuditFilter, string> = {
+  all: "All logs",
+  plans: "Plans",
+  vault: "Vault",
+  admin: "Admin / Pause",
+  marketplace: "Marketplace",
 };
 
 function formatUsdc(value: bigint) {
@@ -51,6 +122,29 @@ function percentToBps(value: string) {
 
 function formatBps(value: bigint) {
   return `${Number(value) / 100}%`;
+}
+
+function formatDate(timestamp: bigint) {
+  return new Date(Number(timestamp) * 1000).toLocaleString();
+}
+
+function formatAddress(address: string | null) {
+  if (!address) return "Closed / burned";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function isSameAddress(left: string | null | undefined, right: string | null | undefined) {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function paginate<T>(items: T[], page: number) {
+  const totalPages = Math.max(1, Math.ceil(items.length / ADMIN_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages - 1);
+  return {
+    safePage,
+    totalPages,
+    pageItems: items.slice(safePage * ADMIN_PAGE_SIZE, safePage * ADMIN_PAGE_SIZE + ADMIN_PAGE_SIZE),
+  };
 }
 
 function normalizePlan(id: bigint, plan: unknown): SavingPlan {
@@ -75,9 +169,15 @@ function normalizePlan(id: bigint, plan: unknown): SavingPlan {
 }
 
 export default function AdminDashboard() {
-  const { account, contracts } = useWeb3();
-  const { mockUSDC, savingCore, vaultManager } = contracts;
+  const { account, provider, contracts } = useWeb3();
+  const { mockUSDC, savingCore, vaultManager, depositMarketplace } = contracts;
   const [plans, setPlans] = useState<SavingPlan[]>([]);
+  const [adminDeposits, setAdminDeposits] = useState<AdminDepositInfo[]>([]);
+  const [depositFilter, setDepositFilter] = useState<DepositFilter>("all");
+  const [depositPage, setDepositPage] = useState(0);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
+  const [auditPage, setAuditPage] = useState(0);
   const [principalLocked, setPrincipalLocked] = useState<bigint>(0n);
   const [vaultBalance, setVaultBalance] = useState<bigint>(0n);
   const [reservedInterest, setReservedInterest] = useState<bigint>(0n);
@@ -89,18 +189,66 @@ export default function AdminDashboard() {
   const [fundAmount, setFundAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [createPlanForm, setCreatePlanForm] = useState<CreatePlanForm>(defaultCreatePlanForm);
+  const [aprEditsByPlan, setAprEditsByPlan] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [adminRole, setAdminRole] = useState<"owner" | "admin" | "unauthorized" | null>(null);
   const [txStatus, setTxStatus] = useState("");
   const [alertMessage, setAlertMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
+  const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => new Set());
+  const confirmedActionRef = useRef<() => void>(() => undefined);
 
   const isBusy = isLoading || txStatus.length > 0 || !account;
+  const filteredDeposits = useMemo(() => {
+    return adminDeposits.filter((deposit) => {
+      if (depositFilter === "all") return true;
+      if (depositFilter === "active") return deposit.status === 1n;
+      if (depositFilter === "withdrawn") return deposit.status === 2n;
+      if (depositFilter === "early") return deposit.status === 3n;
+      if (depositFilter === "manual") return deposit.status === 4n;
+      if (depositFilter === "auto") return deposit.status === 5n;
+      if (depositFilter === "deferred") return deposit.unpaidInterest > 0n;
+      if (depositFilter === "escrowed") return deposit.status === 1n && isSameAddress(deposit.owner, CONTRACT_ADDRESSES.DepositMarketplace);
+      return true;
+    });
+  }, [adminDeposits, depositFilter]);
+  const depositPagination = paginate(filteredDeposits, depositPage);
+  const filteredAuditLogs = useMemo(() => {
+    return auditFilter === "all" ? auditLogs : auditLogs.filter((log) => log.category === auditFilter);
+  }, [auditFilter, auditLogs]);
+  const auditPagination = paginate(filteredAuditLogs, auditPage);
+  const toastItems: ToastItem[] = [
+    ...(txStatus ? [{ id: `status:${txStatus}`, message: txStatus, tone: "status" as const }] : []),
+    ...(alertMessage ? [{ id: `success:${alertMessage}`, message: alertMessage, tone: "success" as const }] : []),
+    ...(errorMessage ? [{ id: `error:${errorMessage}`, message: errorMessage, tone: "error" as const }] : []),
+  ].filter((item) => !dismissedToastIds.has(item.id));
 
   const parseError = useCallback((error: unknown) => {
     return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
   }, [mockUSDC, savingCore, vaultManager]);
+
+  const requestConfirmation = useCallback((nextConfirmation: ConfirmationState, action: () => void) => {
+    confirmedActionRef.current = action;
+    setConfirmation(nextConfirmation);
+  }, []);
+
+  const cancelConfirmation = useCallback(() => {
+    setConfirmation(null);
+    confirmedActionRef.current = () => undefined;
+  }, []);
+
+  const confirmRequestedAction = useCallback(() => {
+    const action = confirmedActionRef.current;
+    setConfirmation(null);
+    confirmedActionRef.current = () => undefined;
+    action();
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setDismissedToastIds((current) => new Set(current).add(id));
+  }, []);
 
   const refreshAdminData = useCallback(async () => {
     if (!mockUSDC || !savingCore || !vaultManager) return;
@@ -126,6 +274,96 @@ export default function AdminDashboard() {
         fetchedPlans.push(normalizePlan(planId, await savingCore.savingPlans(planId)));
       }
 
+      const nextDepositId = (await savingCore.nextDepositId()) as bigint;
+      const fetchedDeposits: AdminDepositInfo[] = [];
+      for (let depositId = 0n; depositId < nextDepositId; depositId += 1n) {
+        const deposit = normalizeDeposit(depositId, await savingCore.deposits(depositId));
+
+        try {
+          deposit.owner = ethers.getAddress((await savingCore.ownerOf(depositId)) as string);
+        } catch {
+          deposit.owner = null;
+        }
+
+        try {
+          const [unpaidInterest, claimant] = await Promise.all([
+            savingCore.unpaidInterest(depositId) as Promise<bigint>,
+            savingCore.interestClaimant(depositId) as Promise<string>,
+          ]);
+          deposit.unpaidInterest = unpaidInterest;
+          deposit.interestClaimant = claimant === ethers.ZeroAddress ? null : ethers.getAddress(claimant);
+        } catch {
+          deposit.unpaidInterest = 0n;
+          deposit.interestClaimant = null;
+        }
+
+        fetchedDeposits.push(deposit);
+      }
+
+      const nextAuditLogs: AuditLogEntry[] = [];
+      if (provider) {
+        const appendAuditLogs = async (
+          contract: ethers.Contract | null,
+          contractName: string,
+          startBlock: number,
+          events: { name: string; category: AuditLogEntry["category"]; action: string; summarize: (args: ethers.Result | null) => string }[],
+        ) => {
+          if (!contract) return;
+
+          for (const eventConfig of events) {
+            const filterFactory = (contract.filters as unknown as Record<string, (() => ethers.DeferredTopicFilter) | undefined>)[eventConfig.name];
+            if (!filterFactory) continue;
+
+            const eventsForType = await queryFilterInChunks(contract, filterFactory(), provider, startBlock);
+            for (const event of eventsForType) {
+              const transaction = await provider.getTransaction(event.transactionHash);
+              nextAuditLogs.push({
+                id: `${event.transactionHash}:${event.index}`,
+                category: eventConfig.category,
+                contractName,
+                action: eventConfig.action,
+                summary: eventConfig.summarize(readEventArgs(event)),
+                blockNumber: event.blockNumber,
+                transactionHash: event.transactionHash,
+                logIndex: event.index,
+                actor: transaction?.from ? ethers.getAddress(transaction.from) : null,
+              });
+            }
+          }
+        };
+
+        await appendAuditLogs(savingCore, "SavingCore", DEPLOYMENT_BLOCKS.SavingCore, [
+          { name: "PlanCreated", category: "plans", action: "Plan created", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} created` },
+          { name: "PlanUpdated", category: "plans", action: "Plan updated", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} APR/status updated` },
+          { name: "Paused", category: "admin", action: "SavingCore paused", summarize: () => "SavingCore emergency pause enabled" },
+          { name: "Unpaused", category: "admin", action: "SavingCore unpaused", summarize: () => "SavingCore emergency pause disabled" },
+          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
+          { name: "DepositMarketplaceUpdated", category: "marketplace", action: "Marketplace updated", summarize: () => "Authorized deposit marketplace changed" },
+          { name: "DepositMarketplaceLocked", category: "marketplace", action: "Marketplace locked", summarize: () => "Authorized deposit marketplace permanently locked" },
+          { name: "MetadataImageURIUpdated", category: "admin", action: "Metadata image updated", summarize: () => "Deposit certificate metadata image URI updated" },
+          { name: "MetadataPermanentlyLocked", category: "admin", action: "Metadata locked", summarize: () => "Deposit certificate metadata permanently locked" },
+        ]);
+
+        await appendAuditLogs(vaultManager, "VaultManager", DEPLOYMENT_BLOCKS.VaultManager, [
+          { name: "FeeReceiverUpdated", category: "vault", action: "Fee receiver updated", summarize: () => "Early-withdrawal fee receiver changed" },
+          { name: "VaultFunded", category: "vault", action: "Vault funded", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} added to interest vault` },
+          { name: "VaultWithdrawn", category: "vault", action: "Vault withdrawn", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} withdrawn from interest vault` },
+          { name: "SavingCoreUpdated", category: "admin", action: "SavingCore updated", summarize: () => "Authorized SavingCore changed" },
+          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
+          { name: "SavingCoreLocked", category: "admin", action: "SavingCore locked", summarize: () => "Authorized SavingCore permanently locked" },
+          { name: "Paused", category: "admin", action: "VaultManager paused", summarize: () => "VaultManager pause enabled" },
+          { name: "Unpaused", category: "admin", action: "VaultManager unpaused", summarize: () => "VaultManager pause disabled" },
+        ]);
+
+        await appendAuditLogs(depositMarketplace, "DepositMarketplace", DEPLOYMENT_BLOCKS.DepositMarketplace, [
+          { name: "TermsHashUpdated", category: "marketplace", action: "Terms updated", summarize: () => "Marketplace terms hash changed" },
+          { name: "UnlistedDepositRecovered", category: "marketplace", action: "Deposit recovered", summarize: (args) => `Deposit #${args?.[0]?.toString() ?? "?"} recovered from marketplace` },
+          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
+          { name: "Paused", category: "admin", action: "Marketplace paused", summarize: () => "Marketplace pause enabled" },
+          { name: "Unpaused", category: "admin", action: "Marketplace unpaused", summarize: () => "Marketplace pause disabled" },
+        ]);
+      }
+
       setVaultBalance(vaultFund);
       setPrincipalLocked(principal);
       setReservedInterest(reserve);
@@ -135,12 +373,14 @@ export default function AdminDashboard() {
       setSavingCorePaused(corePaused);
       setVaultManagerPaused(vaultPaused);
       setPlans(fetchedPlans);
+      setAdminDeposits(fetchedDeposits.sort((left, right) => Number(right.id - left.id)));
+      setAuditLogs(nextAuditLogs.sort((left, right) => right.blockNumber - left.blockNumber || right.logIndex - left.logIndex));
     } catch (error) {
       setErrorMessage(parseError(error));
     } finally {
       setIsLoading(false);
     }
-  }, [mockUSDC, parseError, savingCore, vaultManager]);
+  }, [depositMarketplace, mockUSDC, parseError, provider, savingCore, vaultManager]);
 
   const runTransaction = useCallback(async (
     label: string,
@@ -150,6 +390,7 @@ export default function AdminDashboard() {
     setTxStatus(label);
     setErrorMessage("");
     setAlertMessage("");
+    setDismissedToastIds(new Set());
 
     try {
       const tx = await action();
@@ -171,6 +412,7 @@ export default function AdminDashboard() {
     setTxStatus("Approving vault funding...");
     setErrorMessage("");
     setAlertMessage("");
+    setDismissedToastIds(new Set());
 
     try {
       const approvalTx = await mockUSDC.approve(CONTRACT_ADDRESSES.VaultManager, amount);
@@ -241,29 +483,56 @@ export default function AdminDashboard() {
     );
   }
 
-  function handleUpdateApr(plan: SavingPlan) {
+  function handleUpdateApr(plan: SavingPlan, nextApr: string) {
     if (!savingCore) return;
-
-    const nextApr = window.prompt("New APR percentage", String(Number(plan.aprBps) / 100));
     if (!nextApr) return;
 
-    void runTransaction(
-      "Updating APR...",
-      () => savingCore.updatePlan(plan.id, percentToBps(nextApr)) as Promise<ethers.TransactionResponse>,
-      "APR updated."
+    requestConfirmation(
+      {
+        title: "Update plan APR?",
+        description: "This affects new deposits and future manual renewals only. Existing deposit snapshots do not change.",
+        confirmLabel: "Update APR",
+        details: [
+          { label: "Plan", value: `#${plan.id.toString()}` },
+          { label: "Current APR", value: formatBps(plan.aprBps) },
+          { label: "New APR", value: `${nextApr}%` },
+        ],
+      },
+      () =>
+        void runTransaction(
+          "Updating APR...",
+          () => savingCore.updatePlan(plan.id, percentToBps(nextApr)) as Promise<ethers.TransactionResponse>,
+          "APR updated."
+        ).then(() => setAprEditsByPlan((current) => ({ ...current, [plan.id.toString()]: "" })))
     );
   }
 
   function handleTogglePlan(plan: SavingPlan) {
     if (!savingCore) return;
 
-    void runTransaction(
-      plan.enabled ? "Disabling plan..." : "Enabling plan...",
+    requestConfirmation(
+      {
+        title: plan.enabled ? "Disable this saving plan?" : "Enable this saving plan?",
+        description: plan.enabled
+          ? "New deposits and renewals into this plan will be blocked. Existing active deposits can still be withdrawn normally."
+          : "Users will be able to open new deposits into this plan again.",
+        confirmLabel: plan.enabled ? "Disable Plan" : "Enable Plan",
+        tone: plan.enabled ? "danger" : "default",
+        details: [
+          { label: "Plan", value: `#${plan.id.toString()}` },
+          { label: "Tenor", value: `${plan.tenorDays.toString()} days` },
+          { label: "APR", value: formatBps(plan.aprBps) },
+        ],
+      },
       () =>
-        (plan.enabled
-          ? savingCore.disablePlan(plan.id)
-          : savingCore.enablePlan(plan.id)) as Promise<ethers.TransactionResponse>,
-      plan.enabled ? "Plan disabled." : "Plan enabled."
+        void runTransaction(
+          plan.enabled ? "Disabling plan..." : "Enabling plan...",
+          () =>
+            (plan.enabled
+              ? savingCore.disablePlan(plan.id)
+              : savingCore.enablePlan(plan.id)) as Promise<ethers.TransactionResponse>,
+          plan.enabled ? "Plan disabled." : "Plan enabled."
+        )
     );
   }
 
@@ -350,9 +619,9 @@ export default function AdminDashboard() {
   return (
     <div className="dashboard-grid">
       <section className="page-card dashboard-hero">
-        <p className="eyebrow">Admin Dashboard</p>
-        <h1>Protocol Controls</h1>
-        <p>Create plans, fund vault liquidity, pause contracts, and monitor protocol state from here.</p>
+        <p className="eyebrow">Defi Banking Admin</p>
+        <h1>Banking control center</h1>
+        <p>Create savings plans, protect vault liquidity, monitor reserves, and manage emergency controls from one admin workspace.</p>
       </section>
 
       {!account && <p className="status-message">Connect the owner or admin wallet to perform administrative actions.</p>}
@@ -360,9 +629,6 @@ export default function AdminDashboard() {
         <p className="status-message">Connected role: {adminRole === "owner" ? "Deployer owner" : "Operational admin"}</p>
       )}
       {isLoading && <p className="status-message">Loading admin data...</p>}
-      {txStatus && <p className="status-message">{txStatus}</p>}
-      {alertMessage && <p className="success-message">{alertMessage}</p>}
-      {errorMessage && <p className="error-message">{errorMessage}</p>}
 
       <section className="section-panel">
         <div className="section-header">
@@ -576,13 +842,26 @@ export default function AdminDashboard() {
                     <td>{plan.enabled ? "Enabled" : "Disabled"}</td>
                     <td>
                       <div className="table-actions">
+                        <input
+                          aria-label={`New APR for plan ${plan.id.toString()}`}
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          type="number"
+                          placeholder={String(Number(plan.aprBps) / 100)}
+                          value={aprEditsByPlan[plan.id.toString()] ?? ""}
+                          onChange={(event) =>
+                            setAprEditsByPlan((current) => ({ ...current, [plan.id.toString()]: event.target.value }))
+                          }
+                          disabled={isBusy}
+                        />
                         <button
                           className="secondary-button"
                           type="button"
-                          onClick={() => handleUpdateApr(plan)}
-                          disabled={isBusy}
+                          onClick={() => handleUpdateApr(plan, aprEditsByPlan[plan.id.toString()] ?? "")}
+                          disabled={isBusy || !(aprEditsByPlan[plan.id.toString()] ?? "")}
                         >
-                          Edit APR
+                          Save APR
                         </button>
                         <button
                           className="secondary-button"
@@ -601,6 +880,228 @@ export default function AdminDashboard() {
           </table>
         </div>
       </section>
+
+      <section className="section-panel">
+        <div className="section-header">
+          <p className="eyebrow">Deposit Explorer</p>
+          <div className="section-title-row">
+            <div>
+              <h2>All deposit certificates</h2>
+              <p>Review every deposit, including active certificates, closed positions, marketplace escrow, and deferred interest claims.</p>
+            </div>
+            <label className="form-row compact-filter">
+              Show
+              <select
+                value={depositFilter}
+                onChange={(event) => {
+                  setDepositFilter(event.target.value as DepositFilter);
+                  setDepositPage(0);
+                }}
+              >
+                {Object.entries(DEPOSIT_FILTER_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>Plan</th>
+                <th>Principal</th>
+                <th>APR</th>
+                <th>Penalty</th>
+                <th>Maturity</th>
+                <th>Unpaid Interest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {depositPagination.pageItems.length === 0 ? (
+                <tr>
+                  <td colSpan={9}>No deposits match this filter.</td>
+                </tr>
+              ) : (
+                depositPagination.pageItems.map((deposit) => (
+                  <tr key={deposit.id.toString()}>
+                    <td>{deposit.id.toString()}</td>
+                    <td>{DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown"}</td>
+                    <td className="address-text" title={deposit.owner ?? undefined}>{formatAddress(deposit.owner)}</td>
+                    <td>{deposit.planId.toString()}</td>
+                    <td>{formatUsdc(deposit.principal)}</td>
+                    <td>{formatBps(deposit.aprBpsAtOpen)}</td>
+                    <td>{formatBps(deposit.penaltyBpsAtOpen)}</td>
+                    <td>{formatDate(deposit.maturityAt)}</td>
+                    <td>
+                      {deposit.unpaidInterest > 0n ? (
+                        <span title={deposit.interestClaimant ?? undefined}>{formatUsdc(deposit.unpaidInterest)}</span>
+                      ) : "None"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="pagination-row admin-pagination-row">
+          <button className="secondary-button compact-button" type="button" disabled={depositPagination.safePage === 0} onClick={() => setDepositPage((page) => Math.max(0, page - 1))}>
+            Previous
+          </button>
+          <span>Page {depositPagination.safePage + 1} of {depositPagination.totalPages} · {filteredDeposits.length} deposits</span>
+          <button className="secondary-button compact-button" type="button" disabled={depositPagination.safePage >= depositPagination.totalPages - 1} onClick={() => setDepositPage((page) => page + 1)}>
+            Next
+          </button>
+        </div>
+      </section>
+
+      <section className="section-panel">
+        <div className="section-header">
+          <p className="eyebrow">Admin Audit Logs</p>
+          <div className="section-title-row">
+            <div>
+              <h2>Owner and admin activity</h2>
+              <p>Event-based audit trail for operational actions. Sender is read from each transaction when available.</p>
+            </div>
+            <label className="form-row compact-filter">
+              Show
+              <select
+                value={auditFilter}
+                onChange={(event) => {
+                  setAuditFilter(event.target.value as AuditFilter);
+                  setAuditPage(0);
+                }}
+              >
+                {Object.entries(AUDIT_FILTER_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Block</th>
+                <th>Category</th>
+                <th>Contract</th>
+                <th>Action</th>
+                <th>Summary</th>
+                <th>Sender</th>
+                <th>Tx</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditPagination.pageItems.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>No audit logs match this filter.</td>
+                </tr>
+              ) : (
+                auditPagination.pageItems.map((log) => (
+                  <tr key={log.id}>
+                    <td>{log.blockNumber}</td>
+                    <td>{AUDIT_FILTER_LABELS[log.category]}</td>
+                    <td>{log.contractName}</td>
+                    <td>{log.action}</td>
+                    <td>{log.summary}</td>
+                    <td className="address-text" title={log.actor ?? undefined}>{formatAddress(log.actor)}</td>
+                    <td>
+                      <a href={`https://sepolia.etherscan.io/tx/${log.transactionHash}`} target="_blank" rel="noreferrer">
+                        View
+                      </a>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="pagination-row admin-pagination-row">
+          <button className="secondary-button compact-button" type="button" disabled={auditPagination.safePage === 0} onClick={() => setAuditPage((page) => Math.max(0, page - 1))}>
+            Previous
+          </button>
+          <span>Page {auditPagination.safePage + 1} of {auditPagination.totalPages} · {filteredAuditLogs.length} logs</span>
+          <button className="secondary-button compact-button" type="button" disabled={auditPagination.safePage >= auditPagination.totalPages - 1} onClick={() => setAuditPage((page) => page + 1)}>
+            Next
+          </button>
+        </div>
+      </section>
+
+      <ConfirmationDialog
+        open={confirmation !== null}
+        title={confirmation?.title ?? "Review admin action"}
+        description={confirmation?.description}
+        confirmLabel={confirmation?.confirmLabel}
+        tone={confirmation?.tone}
+        onCancel={cancelConfirmation}
+        onConfirm={confirmRequestedAction}
+      >
+        {confirmation?.details && (
+          <dl>
+            {confirmation.details.map((detail) => (
+              <div key={detail.label}>
+                <dt>{detail.label}</dt>
+                <dd>{detail.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </ConfirmationDialog>
+      <ToastStack items={toastItems} onDismiss={dismissToast} />
     </div>
   );
+}
+
+function normalizeDeposit(id: bigint, deposit: unknown): AdminDepositInfo {
+  const values = deposit as {
+    planId: bigint;
+    principal: bigint;
+    startAt: bigint;
+    maturityAt: bigint;
+    aprBpsAtOpen: bigint;
+    penaltyBpsAtOpen: bigint;
+    status: bigint;
+  };
+
+  return {
+    id,
+    planId: values.planId,
+    principal: values.principal,
+    startAt: values.startAt,
+    maturityAt: values.maturityAt,
+    aprBpsAtOpen: values.aprBpsAtOpen,
+    penaltyBpsAtOpen: values.penaltyBpsAtOpen,
+    status: values.status,
+    owner: null,
+    unpaidInterest: 0n,
+    interestClaimant: null,
+  };
+}
+
+async function queryFilterInChunks(
+  contract: ethers.Contract,
+  filter: ethers.DeferredTopicFilter,
+  provider: ethers.BrowserProvider,
+  startBlock: number,
+) {
+  const latestBlockNumber = await provider.getBlockNumber();
+  const events = [];
+
+  for (let fromBlock = startBlock; fromBlock <= latestBlockNumber; fromBlock += CHUNK_SIZE) {
+    const toBlock = Math.min(fromBlock + CHUNK_SIZE - 1, latestBlockNumber);
+    const chunk = await contract.queryFilter(filter, fromBlock, toBlock);
+    events.push(...chunk);
+  }
+
+  return events;
+}
+
+function readEventArgs(event: ethers.EventLog | ethers.Log) {
+  return "args" in event ? event.args : null;
 }

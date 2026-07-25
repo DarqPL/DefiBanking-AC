@@ -16,7 +16,7 @@ function App() {
     <div className="app-shell">
       <nav className="navbar">
         <Link className="brand" to="/">
-          DeFi Term Deposit
+          Defi Banking
         </Link>
 
         <div className="nav-actions">
@@ -54,6 +54,9 @@ function App() {
         </div>
       ) : (
         <main className="main-content">
+          <aside className="status-message" role="note">
+            Sepolia demo only. MockUSDC is freely mintable for testing and has no real-world monetary value.
+          </aside>
           <Routes>
             <Route path="/" element={<UserDashboard />} />
             <Route path="/marketplace" element={<Marketplace />} />
