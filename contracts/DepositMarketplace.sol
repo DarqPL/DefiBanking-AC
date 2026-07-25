@@ -80,6 +80,9 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     /// @notice Current marketplace terms hash sellers must accept when listing.
     bytes32 public currentTermsHash;
 
+    /// @notice Operational admin allowed to perform day-to-day privileged actions.
+    address public admin;
+
     /**
      * @notice Active marketplace listing.
      * @param seller Seller that owns the sale proceeds and receives cleanup/cancel returns.
@@ -150,6 +153,17 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     /// @dev Reverts when the seller tries to buy their own listing.
     error SelfBuyNotAllowed();
 
+    /// @dev Reverts when caller is neither owner nor configured admin.
+    error UnauthorizedAdmin(address account);
+
+    /**
+     * @notice Restricts function access to the owner or configured operational admin.
+     */
+    modifier onlyOwnerOrAdmin() {
+        if (msg.sender != owner() && msg.sender != admin) revert UnauthorizedAdmin(msg.sender);
+        _;
+    }
+
     /**
      * @notice Emitted when a deposit NFT is listed.
      */
@@ -179,6 +193,11 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
      * @notice Emitted when the owner recovers an unlisted NFT accidentally sent with raw transferFrom.
      */
     event UnlistedDepositRecovered(uint256 indexed depositId, address indexed recipient);
+
+    /**
+     * @notice Emitted when the operational admin is updated.
+     */
+    event AdminUpdated(address indexed previousAdmin, address indexed newAdmin);
 
     /**
      * @notice Initializes the marketplace with official protocol contracts and terms.
@@ -332,7 +351,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
      * @param depositId Deposit NFT id to recover.
      * @param recipient Account that should receive the NFT.
      */
-    function recoverUnlistedDeposit(uint256 depositId, address recipient) external onlyOwner {
+    function recoverUnlistedDeposit(uint256 depositId, address recipient) external onlyOwnerOrAdmin {
         if (recipient == address(0)) revert InvalidAddress();
         if (listingIndexPlusOne[depositId] != 0) revert AlreadyListed();
         if (savingCore.ownerOf(depositId) != address(this)) revert NotEscrowed();
@@ -377,10 +396,23 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     }
 
     /**
+     * @notice Updates the operational admin address.
+     * @param newAdmin New nonzero admin address.
+     */
+    function setAdmin(address newAdmin) external onlyOwner {
+        if (newAdmin == address(0)) revert InvalidAddress();
+
+        address previousAdmin = admin;
+        admin = newAdmin;
+
+        emit AdminUpdated(previousAdmin, newAdmin);
+    }
+
+    /**
      * @notice Updates the marketplace terms hash sellers must accept for new listings.
      * @param newTermsHash New terms hash.
      */
-    function setTermsHash(bytes32 newTermsHash) external onlyOwner {
+    function setTermsHash(bytes32 newTermsHash) external onlyOwnerOrAdmin {
         if (newTermsHash == bytes32(0)) revert InvalidTerms();
 
         bytes32 oldTermsHash = currentTermsHash;
@@ -392,14 +424,14 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     /**
      * @notice Pauses listing and buying during an emergency.
      */
-    function pause() external onlyOwner {
+    function pause() external onlyOwnerOrAdmin {
         _pause();
     }
 
     /**
      * @notice Unpauses listing and buying after an emergency is resolved.
      */
-    function unpause() external onlyOwner {
+    function unpause() external onlyOwnerOrAdmin {
         _unpause();
     }
 

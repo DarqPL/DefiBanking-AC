@@ -7,6 +7,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployments, ethers, getNamedAccounts } = hre;
   const { deploy } = deployments;
   const { deployer } = await getNamedAccounts();
+  const protocolAdmin = process.env.PROTOCOL_ADMIN ?? deployer;
 
   const mockUSDC = await deployments.get("MockUSDC");
   const vaultManager = await deployments.get("VaultManager");
@@ -23,7 +24,19 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     await tx.wait();
   }
 
+  if (!(await vaultManagerContract.savingCoreLocked())) {
+    const tx = await vaultManagerContract.lockSavingCore();
+    await tx.wait();
+    console.log(`VaultManager SavingCore locked to ${savingCore.address}`);
+  }
+
   const savingCoreContract = await ethers.getContractAt("SavingCore", savingCore.address);
+  if ((await savingCoreContract.admin()).toLowerCase() !== protocolAdmin.toLowerCase()) {
+    const tx = await savingCoreContract.setAdmin(protocolAdmin);
+    await tx.wait();
+    console.log(`SavingCore admin set to ${protocolAdmin}`);
+  }
+
   const currentMetadataImageURI = await savingCoreContract.metadataImageURI();
   if (currentMetadataImageURI !== METADATA_IMAGE_URI) {
     if (await savingCoreContract.metadataLocked()) {

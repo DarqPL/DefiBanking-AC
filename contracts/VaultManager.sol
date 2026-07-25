@@ -22,6 +22,15 @@ contract VaultManager is Ownable, Pausable {
     /// @notice SavingCore contract allowed to pay interest from this vault.
     address public savingCore;
 
+    /// @notice Operational admin allowed to perform day-to-day privileged actions.
+    address public admin;
+
+    /// @notice Whether the authorized SavingCore address has been permanently locked.
+    bool public savingCoreLocked;
+
+    /// @notice Interest amount promised to deposits and protected from admin vault withdrawals.
+    uint256 public reservedInterest;
+
     /// @dev Reverts when an address parameter is zero.
     error InvalidAddress();
 
@@ -33,6 +42,23 @@ contract VaultManager is Ownable, Pausable {
 
     /// @dev Reverts when a caller is not the configured SavingCore contract.
     error NotSavingCore();
+
+    /// @dev Reverts when caller is neither owner nor configured admin.
+    error UnauthorizedAdmin(address account);
+
+    /// @dev Reverts when trying to change SavingCore after it has been locked.
+    error SavingCoreAlreadyLocked();
+
+    /// @dev Reverts when reserve accounting would underflow.
+    error InsufficientReservedInterest();
+
+    /**
+     * @notice Restricts function access to the owner or configured operational admin.
+     */
+    modifier onlyOwnerOrAdmin() {
+        if (msg.sender != owner() && msg.sender != admin) revert UnauthorizedAdmin(msg.sender);
+        _;
+    }
 
     /**
      * @notice Restricts function access to the configured SavingCore contract.
@@ -71,6 +97,21 @@ contract VaultManager is Ownable, Pausable {
     event SavingCoreUpdated(address indexed oldSavingCore, address indexed newSavingCore);
 
     /**
+     * @notice Emitted when the operational admin is updated.
+     */
+    event AdminUpdated(address indexed previousAdmin, address indexed newAdmin);
+
+    /**
+     * @notice Emitted when SavingCore configuration is permanently locked.
+     */
+    event SavingCoreLocked(address indexed savingCore);
+
+    /**
+     * @notice Emitted when interest reserve accounting changes.
+     */
+    event ReservedInterestUpdated(uint256 reservedInterest);
+
+    /**
      * @notice Emitted when interest liquidity is paid to a depositor.
      * @param recipient Address that received the interest payment.
      * @param amount Amount of interest paid.
@@ -90,10 +131,23 @@ contract VaultManager is Ownable, Pausable {
     }
 
     /**
+     * @notice Updates the operational admin address.
+     * @param newAdmin New nonzero admin address.
+     */
+    function setAdmin(address newAdmin) external onlyOwner {
+        if (newAdmin == address(0)) revert InvalidAddress();
+
+        address previousAdmin = admin;
+        admin = newAdmin;
+
+        emit AdminUpdated(previousAdmin, newAdmin);
+    }
+
+    /**
      * @notice Updates the address that receives early withdrawal penalty fees.
      * @param newReceiver New fee receiver address.
      */
-    function setFeeReceiver(address newReceiver) external onlyOwner {
+    function setFeeReceiver(address newReceiver) external onlyOwnerOrAdmin {
         if (newReceiver == address(0)) revert InvalidAddress();
 
         address oldReceiver = feeReceiver;
@@ -106,7 +160,8 @@ contract VaultManager is Ownable, Pausable {
      * @notice Updates the SavingCore contract authorized to pay interest from this vault.
      * @param newSavingCore SavingCore contract address.
      */
-    function setSavingCore(address newSavingCore) external onlyOwner {
+    function setSavingCore(address newSavingCore) external onlyOwnerOrAdmin {
+        if (savingCoreLocked) revert SavingCoreAlreadyLocked();
         if (newSavingCore == address(0)) revert InvalidAddress();
 
         address oldSavingCore = savingCore;
@@ -116,11 +171,23 @@ contract VaultManager is Ownable, Pausable {
     }
 
     /**
+     * @notice Permanently locks the current SavingCore authorization.
+     */
+    function lockSavingCore() external onlyOwnerOrAdmin {
+        if (savingCoreLocked) revert SavingCoreAlreadyLocked();
+        if (savingCore == address(0)) revert InvalidAddress();
+
+        savingCoreLocked = true;
+
+        emit SavingCoreLocked(savingCore);
+    }
+
+    /**
      * @notice Funds the vault with tokens from the owner.
      * @dev Caller must approve this contract before calling.
      * @param amount Amount of tokens to transfer into the vault.
      */
-    function fundVault(uint256 amount) external onlyOwner whenNotPaused {
+    function fundVault(uint256 amount) external onlyOwnerOrAdmin whenNotPaused {
         if (amount == 0) revert ZeroAmount();
 
         emit VaultFunded(msg.sender, amount);
@@ -132,11 +199,11 @@ contract VaultManager is Ownable, Pausable {
      * @notice Withdraws vault liquidity to the owner.
      * @param amount Amount of tokens to withdraw.
      */
-    function withdrawVault(uint256 amount) external onlyOwner whenNotPaused {
+    function withdrawVault(uint256 amount) external onlyOwnerOrAdmin whenNotPaused {
         if (amount == 0) revert ZeroAmount();
 
         IERC20 vaultToken = token;
-        if (vaultToken.balanceOf(address(this)) < amount) revert InsufficientVaultBalance();
+        if (_withdrawableVaultBalance(vaultToken.balanceOf(address(this))) < amount) revert InsufficientVaultBalance();
 
         address recipient = owner();
 
@@ -154,12 +221,48 @@ contract VaultManager is Ownable, Pausable {
     }
 
     /**
+     * @notice Returns vault liquidity not protected by interest reserve accounting.
+     * @return balance Current withdrawable token balance.
+     */
+    function withdrawableVaultBalance() external view returns (uint256 balance) {
+        balance = _withdrawableVaultBalance(token.balanceOf(address(this)));
+    }
+
+    /**
      * @notice Returns whether the vault currently has enough liquidity to pay an interest amount.
      * @param amount Interest amount to check.
      * @return canPay Whether the vault balance is at least `amount`.
      */
     function canPayInterest(uint256 amount) external view returns (bool canPay) {
         canPay = token.balanceOf(address(this)) >= amount;
+    }
+
+    /**
+     * @notice Adds promised interest to the withdrawal reserve.
+     * @param amount Amount of newly promised interest.
+     */
+    function reserveInterest(uint256 amount) external onlySavingCore {
+        if (amount == 0) revert ZeroAmount();
+
+        reservedInterest += amount;
+
+        emit ReservedInterestUpdated(reservedInterest);
+    }
+
+    /**
+     * @notice Releases promised interest that is no longer owed.
+     * @param amount Amount of reserved interest to release.
+     */
+    function releaseReservedInterest(uint256 amount) external onlySavingCore {
+        _decreaseReservedInterest(amount);
+    }
+
+    /**
+     * @notice Consumes promised interest after the vault has paid it.
+     * @param amount Amount of reserved interest consumed by payment.
+     */
+    function consumeReservedInterest(uint256 amount) external onlySavingCore {
+        _decreaseReservedInterest(amount);
     }
 
     /**
@@ -183,14 +286,37 @@ contract VaultManager is Ownable, Pausable {
     /**
      * @notice Pauses vault funding and withdrawals.
      */
-    function pause() external onlyOwner {
+    function pause() external onlyOwnerOrAdmin {
         _pause();
     }
 
     /**
      * @notice Unpauses vault funding and withdrawals.
      */
-    function unpause() external onlyOwner {
+    function unpause() external onlyOwnerOrAdmin {
         _unpause();
+    }
+
+    /**
+     * @dev Returns vault balance protected from underflow when reserves exceed liquidity.
+     */
+    function _withdrawableVaultBalance(uint256 balance) private view returns (uint256) {
+        uint256 reserve = reservedInterest;
+        if (balance <= reserve) return 0;
+        return balance - reserve;
+    }
+
+    /**
+     * @dev Decreases reserve accounting for released or paid promised interest.
+     */
+    function _decreaseReservedInterest(uint256 amount) private {
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 reserve = reservedInterest;
+        if (amount > reserve) revert InsufficientReservedInterest();
+
+        reservedInterest = reserve - amount;
+
+        emit ReservedInterestUpdated(reservedInterest);
     }
 }

@@ -32,6 +32,11 @@
     },
     {
         "inputs": [],
+        "name": "DepositMarketplaceAlreadyLocked",
+        "type": "error"
+    },
+    {
+        "inputs": [],
         "name": "DepositNotActive",
         "type": "error"
     },
@@ -282,9 +287,39 @@
         "type": "error"
     },
     {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "account",
+                "type": "address"
+            }
+        ],
+        "name": "UnauthorizedAdmin",
+        "type": "error"
+    },
+    {
         "inputs": [],
         "name": "UnauthorizedTransfer",
         "type": "error"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "previousAdmin",
+                "type": "address"
+            },
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "newAdmin",
+                "type": "address"
+            }
+        ],
+        "name": "AdminUpdated",
+        "type": "event"
     },
     {
         "anonymous": false,
@@ -334,6 +369,19 @@
             }
         ],
         "name": "ApprovalForAll",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": true,
+                "internalType": "address",
+                "name": "depositMarketplace",
+                "type": "address"
+            }
+        ],
+        "name": "DepositMarketplaceLocked",
         "type": "event"
     },
     {
@@ -834,6 +882,19 @@
         "type": "function"
     },
     {
+        "inputs": [],
+        "name": "admin",
+        "outputs": [
+            {
+                "internalType": "address",
+                "name": "",
+                "type": "address"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
         "inputs": [
             {
                 "internalType": "address",
@@ -954,6 +1015,19 @@
         "type": "function"
     },
     {
+        "inputs": [],
+        "name": "depositMarketplaceLocked",
+        "outputs": [
+            {
+                "internalType": "bool",
+                "name": "",
+                "type": "bool"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
         "inputs": [
             {
                 "internalType": "uint256",
@@ -1032,6 +1106,19 @@
         "inputs": [
             {
                 "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            }
+        ],
+        "name": "emergencyWithdrawPrincipal",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "uint256",
                 "name": "planId",
                 "type": "uint256"
             }
@@ -1101,6 +1188,13 @@
             }
         ],
         "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "lockDepositMarketplace",
+        "outputs": [],
+        "stateMutability": "nonpayable",
         "type": "function"
     },
     {
@@ -1302,6 +1396,25 @@
     {
         "inputs": [
             {
+                "internalType": "uint256",
+                "name": "depositId",
+                "type": "uint256"
+            }
+        ],
+        "name": "reservedInterestByDeposit",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
                 "internalType": "address",
                 "name": "from",
                 "type": "address"
@@ -1392,6 +1505,19 @@
             }
         ],
         "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "address",
+                "name": "newAdmin",
+                "type": "address"
+            }
+        ],
+        "name": "setAdmin",
+        "outputs": [],
+        "stateMutability": "nonpayable",
         "type": "function"
     },
     {

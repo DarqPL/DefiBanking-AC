@@ -139,8 +139,22 @@ describe("DepositMarketplace", function () {
       await expectCustomError(
         marketplace.connect(other).setTermsHash.staticCall(termsHash),
         marketplace.interface,
-        "OwnableUnauthorizedAccount",
+        "UnauthorizedAdmin",
       );
+    });
+
+    it("lets the owner configure an operational admin for marketplace controls", async function () {
+      const { other, marketplace } = await deployMarketplaceFixture();
+
+      await marketplace.setAdmin(other.address);
+      expect(await marketplace.admin()).to.equal(other.address);
+
+      await marketplace.connect(other).setTermsHash(otherTermsHash);
+      expect(await marketplace.currentTermsHash()).to.equal(otherTermsHash);
+      await marketplace.connect(other).pause();
+      expect(await marketplace.paused()).to.equal(true);
+
+      await expectCustomError(marketplace.connect(other).setAdmin.staticCall(other.address), marketplace.interface, "OwnableUnauthorizedAccount");
     });
   });
 
@@ -439,7 +453,7 @@ describe("DepositMarketplace", function () {
       await expectCustomError(
         marketplace.connect(buyer).recoverUnlistedDeposit.staticCall(depositId, seller.address),
         marketplace.interface,
-        "OwnableUnauthorizedAccount",
+        "UnauthorizedAdmin",
       );
       await expectCustomError(
         marketplace.recoverUnlistedDeposit.staticCall(depositId, ethers.ZeroAddress),
@@ -520,8 +534,8 @@ describe("DepositMarketplace", function () {
     it("restricts pause controls to the owner", async function () {
       const { seller, marketplace } = await deployMarketplaceFixture();
 
-      await expectCustomError(marketplace.connect(seller).pause.staticCall(), marketplace.interface, "OwnableUnauthorizedAccount");
-      await expectCustomError(marketplace.connect(seller).unpause.staticCall(), marketplace.interface, "OwnableUnauthorizedAccount");
+      await expectCustomError(marketplace.connect(seller).pause.staticCall(), marketplace.interface, "UnauthorizedAdmin");
+      await expectCustomError(marketplace.connect(seller).unpause.staticCall(), marketplace.interface, "UnauthorizedAdmin");
     });
   });
 });

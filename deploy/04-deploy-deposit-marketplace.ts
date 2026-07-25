@@ -7,6 +7,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployments, getNamedAccounts } = hre;
   const { deploy } = deployments;
   const { deployer } = await getNamedAccounts();
+  const protocolAdmin = process.env.PROTOCOL_ADMIN ?? deployer;
 
   const mockUSDC = await deployments.get("MockUSDC");
   const savingCore = await deployments.get("SavingCore");
@@ -23,6 +24,19 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     const tx = await savingCoreContract.setDepositMarketplace(marketplace.address);
     await tx.wait();
     console.log(`SavingCore marketplace set to ${marketplace.address}`);
+  }
+
+  if (!(await savingCoreContract.depositMarketplaceLocked())) {
+    const tx = await savingCoreContract.lockDepositMarketplace();
+    await tx.wait();
+    console.log(`SavingCore marketplace locked to ${marketplace.address}`);
+  }
+
+  const marketplaceContract = await hre.ethers.getContractAt("DepositMarketplace", marketplace.address);
+  if ((await marketplaceContract.admin()).toLowerCase() !== protocolAdmin.toLowerCase()) {
+    const tx = await marketplaceContract.setAdmin(protocolAdmin);
+    await tx.wait();
+    console.log(`DepositMarketplace admin set to ${protocolAdmin}`);
   }
 };
 

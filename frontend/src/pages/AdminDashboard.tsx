@@ -80,6 +80,8 @@ export default function AdminDashboard() {
   const [plans, setPlans] = useState<SavingPlan[]>([]);
   const [principalLocked, setPrincipalLocked] = useState<bigint>(0n);
   const [vaultBalance, setVaultBalance] = useState<bigint>(0n);
+  const [reservedInterest, setReservedInterest] = useState<bigint>(0n);
+  const [withdrawableVaultBalance, setWithdrawableVaultBalance] = useState<bigint>(0n);
   const [feeReceiver, setFeeReceiver] = useState("");
   const [feeReceiverBalance, setFeeReceiverBalance] = useState<bigint>(0n);
   const [savingCorePaused, setSavingCorePaused] = useState(false);
@@ -89,6 +91,7 @@ export default function AdminDashboard() {
   const [createPlanForm, setCreatePlanForm] = useState<CreatePlanForm>(defaultCreatePlanForm);
   const [isLoading, setIsLoading] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [adminRole, setAdminRole] = useState<"owner" | "admin" | "unauthorized" | null>(null);
   const [txStatus, setTxStatus] = useState("");
   const [alertMessage, setAlertMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -106,8 +109,10 @@ export default function AdminDashboard() {
     setErrorMessage("");
 
     try {
-      const [vaultFund, principal, receiver, corePaused, vaultPaused, nextPlanId] = await Promise.all([
+      const [vaultFund, withdrawableVault, reserve, principal, receiver, corePaused, vaultPaused, nextPlanId] = await Promise.all([
         mockUSDC.balanceOf(CONTRACT_ADDRESSES.VaultManager) as Promise<bigint>,
+        vaultManager.withdrawableVaultBalance() as Promise<bigint>,
+        vaultManager.reservedInterest() as Promise<bigint>,
         mockUSDC.balanceOf(CONTRACT_ADDRESSES.SavingCore) as Promise<bigint>,
         vaultManager.feeReceiver() as Promise<string>,
         savingCore.paused() as Promise<boolean>,
@@ -123,6 +128,8 @@ export default function AdminDashboard() {
 
       setVaultBalance(vaultFund);
       setPrincipalLocked(principal);
+      setReservedInterest(reserve);
+      setWithdrawableVaultBalance(withdrawableVault);
       setFeeReceiver(receiver);
       setFeeReceiverBalance(receiverBalance);
       setSavingCorePaused(corePaused);
@@ -270,6 +277,7 @@ export default function AdminDashboard() {
     async function checkAdminAccess() {
       if (!account || !savingCore) {
         setIsAdmin(false);
+        setAdminRole("unauthorized");
         return;
       }
 
@@ -277,14 +285,23 @@ export default function AdminDashboard() {
       setErrorMessage("");
 
       try {
-        const owner = (await savingCore.owner()) as string;
+        const [owner, configuredAdmin] = await Promise.all([
+          savingCore.owner() as Promise<string>,
+          savingCore.admin() as Promise<string>,
+        ]);
         if (!isMounted) return;
 
-        setIsAdmin(owner.toLowerCase() === account.toLowerCase());
+        const normalizedAccount = account.toLowerCase();
+        const isOwner = owner.toLowerCase() === normalizedAccount;
+        const isConfiguredAdmin = configuredAdmin.toLowerCase() === normalizedAccount;
+
+        setIsAdmin(isOwner || isConfiguredAdmin);
+        setAdminRole(isOwner ? "owner" : isConfiguredAdmin ? "admin" : "unauthorized");
       } catch (error) {
         if (!isMounted) return;
 
         setIsAdmin(false);
+        setAdminRole("unauthorized");
         setErrorMessage(parseError(error));
       }
     }
@@ -308,7 +325,7 @@ export default function AdminDashboard() {
         <section className="page-card dashboard-hero">
           <p className="eyebrow">Admin Dashboard</p>
           <h1>Checking permissions...</h1>
-          <p>Verifying whether the connected wallet owns this contract.</p>
+          <p>Verifying whether the connected wallet is the owner or configured admin.</p>
         </section>
       </div>
     );
@@ -338,7 +355,10 @@ export default function AdminDashboard() {
         <p>Create plans, fund vault liquidity, pause contracts, and monitor protocol state from here.</p>
       </section>
 
-      {!account && <p className="status-message">Connect the owner wallet to perform administrative actions.</p>}
+      {!account && <p className="status-message">Connect the owner or admin wallet to perform administrative actions.</p>}
+      {adminRole && adminRole !== "unauthorized" && (
+        <p className="status-message">Connected role: {adminRole === "owner" ? "Deployer owner" : "Operational admin"}</p>
+      )}
       {isLoading && <p className="status-message">Loading admin data...</p>}
       {txStatus && <p className="status-message">{txStatus}</p>}
       {alertMessage && <p className="success-message">{alertMessage}</p>}
@@ -358,6 +378,14 @@ export default function AdminDashboard() {
           <article className="plan-card">
             <p className="eyebrow">Vault Interest Fund</p>
             <h3>{formatUsdc(vaultBalance)}</h3>
+          </article>
+          <article className="plan-card">
+            <p className="eyebrow">Reserved Interest</p>
+            <h3>{formatUsdc(reservedInterest)}</h3>
+          </article>
+          <article className="plan-card">
+            <p className="eyebrow">Withdrawable Vault</p>
+            <h3>{formatUsdc(withdrawableVaultBalance)}</h3>
           </article>
           <article className="plan-card">
             <p className="eyebrow">Fee Receiver</p>

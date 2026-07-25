@@ -32,6 +32,21 @@ interface IVaultManager {
      * @param amount Amount of interest to pay.
      */
     function payInterest(address to, uint256 amount) external;
+
+    /**
+     * @notice Adds promised interest to the vault withdrawal reserve.
+     */
+    function reserveInterest(uint256 amount) external;
+
+    /**
+     * @notice Releases promised interest that is no longer owed.
+     */
+    function releaseReservedInterest(uint256 amount) external;
+
+    /**
+     * @notice Consumes promised interest after payment.
+     */
+    function consumeReservedInterest(uint256 amount) external;
 }
 
 /**
@@ -60,6 +75,12 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /// @notice Marketplace contract authorized to transfer active deposit NFTs between accounts.
     address public depositMarketplace;
+
+    /// @notice Operational admin allowed to perform day-to-day privileged actions.
+    address public admin;
+
+    /// @notice Whether the authorized deposit marketplace has been permanently locked.
+    bool public depositMarketplaceLocked;
 
     /// @notice Whether token metadata URI updates have been permanently disabled.
     bool public metadataLocked;
@@ -136,6 +157,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @notice Account allowed to claim deferred interest after the deposit NFT is burned.
     mapping(uint256 depositId => address claimant) public interestClaimant;
 
+    /// @notice Interest amount reserved for each active or deferred-interest deposit.
+    mapping(uint256 depositId => uint256 amount) public reservedInterestByDeposit;
+
     /// @dev Reverts when a tenor value is zero.
     error InvalidTenor();
 
@@ -210,6 +234,20 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /// @dev Reverts when trying to update metadata after it has been permanently locked.
     error MetadataLocked();
+
+    /// @dev Reverts when caller is neither owner nor configured admin.
+    error UnauthorizedAdmin(address account);
+
+    /// @dev Reverts when trying to change the marketplace after it has been locked.
+    error DepositMarketplaceAlreadyLocked();
+
+    /**
+     * @notice Restricts function access to the owner or configured operational admin.
+     */
+    modifier onlyOwnerOrAdmin() {
+        if (msg.sender != owner() && msg.sender != admin) revert UnauthorizedAdmin(msg.sender);
+        _;
+    }
 
     /**
      * @notice Emitted when a saving plan is created.
@@ -351,6 +389,16 @@ contract SavingCore is ERC721, Ownable, Pausable {
     event DepositMarketplaceUpdated(address indexed oldMarketplace, address indexed newMarketplace);
 
     /**
+     * @notice Emitted when the operational admin is updated.
+     */
+    event AdminUpdated(address indexed previousAdmin, address indexed newAdmin);
+
+    /**
+     * @notice Emitted when the marketplace configuration is permanently locked.
+     */
+    event DepositMarketplaceLocked(address indexed depositMarketplace);
+
+    /**
      * @notice Emitted when the metadata image URI is updated.
      * @param oldImageURI Previous image URI.
      * @param newImageURI New image URI.
@@ -387,7 +435,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 maxDeposit,
         uint16 earlyWithdrawPenaltyBps,
         bool enabled
-    ) external onlyOwner returns (uint256 planId) {
+    ) external onlyOwnerOrAdmin returns (uint256 planId) {
         _validatePlanConfig(tenorDays, aprBps, minDeposit, maxDeposit, earlyWithdrawPenaltyBps);
 
         planId = nextPlanId;
@@ -412,7 +460,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
      * @param planId Saving plan id to update.
      * @param newAprBps New annual percentage rate in basis points.
      */
-    function updatePlan(uint256 planId, uint16 newAprBps) external onlyOwner {
+    function updatePlan(uint256 planId, uint16 newAprBps) external onlyOwnerOrAdmin {
         if (newAprBps > BPS_DENOMINATOR) revert InvalidApr();
 
         SavingPlan storage plan = _getExistingPlan(planId);
@@ -425,7 +473,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
      * @notice Enables an existing saving plan for future deposits.
      * @param planId Saving plan id to enable.
      */
-    function enablePlan(uint256 planId) external onlyOwner {
+    function enablePlan(uint256 planId) external onlyOwnerOrAdmin {
         SavingPlan storage plan = _getExistingPlan(planId);
         if (plan.enabled) revert PlanAlreadyEnabled();
 
@@ -438,7 +486,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
      * @notice Disables an existing saving plan so future deposits cannot use it.
      * @param planId Saving plan id to disable.
      */
-    function disablePlan(uint256 planId) external onlyOwner {
+    function disablePlan(uint256 planId) external onlyOwnerOrAdmin {
         SavingPlan storage plan = _getExistingPlan(planId);
         if (!plan.enabled) revert PlanAlreadyDisabled();
 
@@ -465,7 +513,8 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint64 tenorDays = plan.tenorDays;
         uint16 aprBps = plan.aprBps;
         uint16 earlyWithdrawPenaltyBps = plan.earlyWithdrawPenaltyBps;
-        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(tenorDays) * 1 days);
+        uint256 tenorSeconds = uint256(tenorDays) * 1 days;
+        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(tenorSeconds);
         uint256 depositId = _storeAndMintDeposit(
             msg.sender,
             planId,
@@ -475,6 +524,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             aprBps,
             earlyWithdrawPenaltyBps
         );
+        _reserveDepositInterest(depositId, amount, aprBps, tenorSeconds);
 
         emit DepositOpened(
             depositId,
@@ -513,6 +563,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         if (interest != 0) {
             try vaultManager.payInterest(account, interest) {
                 paidInterest = interest;
+                _consumeDepositReserve(depositId);
             } catch {
                 unpaidInterest[depositId] = interest;
                 interestClaimant[depositId] = account;
@@ -540,6 +591,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
         emit InterestClaimed(depositId, msg.sender, amount);
 
+        _consumeDepositReserve(depositId);
         vaultManager.payInterest(msg.sender, amount);
     }
 
@@ -559,6 +611,8 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
         deposit.status = DepositStatus.EarlyWithdrawn;
         _burn(depositId);
+
+        _releaseDepositReserve(depositId);
 
         emit Withdrawn(depositId, msg.sender, principal, 0, penalty, true);
 
@@ -596,6 +650,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
 
         oldDeposit.status = DepositStatus.ManualRenewed;
+        _consumeDepositReserve(depositId);
         uint256 newDepositId = _storeAndMintDeposit(
             account,
             newPlanId,
@@ -605,6 +660,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             newPlan.aprBps,
             newPlan.earlyWithdrawPenaltyBps
         );
+        _reserveDepositInterest(newDepositId, newPrincipal, newPlan.aprBps, uint256(newPlan.tenorDays) * 1 days);
 
         emit Renewed(
             depositId,
@@ -653,6 +709,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(tenorSeconds);
 
         oldDeposit.status = DepositStatus.AutoRenewed;
+        _consumeDepositReserve(depositId);
         uint256 newDepositId = _storeAndMintDeposit(
             account,
             planId,
@@ -662,6 +719,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             aprBpsAtOpen,
             penaltyBpsAtOpen
         );
+        _reserveDepositInterest(newDepositId, newPrincipal, aprBpsAtOpen, tenorSeconds);
 
         emit Renewed(
             depositId,
@@ -705,6 +763,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
 
         oldDeposit.status = DepositStatus.ManualRenewed;
+        _consumeDepositReserve(depositId);
         uint256 newDepositId = _storeAndMintDeposit(
             account,
             newPlanId,
@@ -714,6 +773,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             newPlan.aprBps,
             newPlan.earlyWithdrawPenaltyBps
         );
+        _reserveDepositInterest(newDepositId, principal, newPlan.aprBps, uint256(newPlan.tenorDays) * 1 days);
 
         emit InterestWithdrawnAndRenewed(depositId, newDepositId, account, newPlanId, principal, interest, startAt, maturityAt);
 
@@ -726,15 +786,29 @@ contract SavingCore is ERC721, Ownable, Pausable {
      * @notice Pauses deposits, withdrawals, and renewal operations during an emergency.
      * @dev Plan administration remains available while paused.
      */
-    function pause() external onlyOwner {
+    function pause() external onlyOwnerOrAdmin {
         _pause();
+    }
+
+    /**
+     * @notice Updates the operational admin address.
+     * @param newAdmin New nonzero admin address.
+     */
+    function setAdmin(address newAdmin) external onlyOwner {
+        if (newAdmin == address(0)) revert InvalidAddress();
+
+        address previousAdmin = admin;
+        admin = newAdmin;
+
+        emit AdminUpdated(previousAdmin, newAdmin);
     }
 
     /**
      * @notice Sets the only marketplace contract allowed to transfer deposit NFTs between accounts.
      * @param newMarketplace Marketplace address authorized to execute deposit NFT transfers.
      */
-    function setDepositMarketplace(address newMarketplace) external onlyOwner {
+    function setDepositMarketplace(address newMarketplace) external onlyOwnerOrAdmin {
+        if (depositMarketplaceLocked) revert DepositMarketplaceAlreadyLocked();
         if (newMarketplace == address(0)) revert InvalidAddress();
 
         address oldMarketplace = depositMarketplace;
@@ -744,10 +818,22 @@ contract SavingCore is ERC721, Ownable, Pausable {
     }
 
     /**
+     * @notice Permanently locks the current authorized marketplace address.
+     */
+    function lockDepositMarketplace() external onlyOwnerOrAdmin {
+        if (depositMarketplaceLocked) revert DepositMarketplaceAlreadyLocked();
+        if (depositMarketplace == address(0)) revert InvalidAddress();
+
+        depositMarketplaceLocked = true;
+
+        emit DepositMarketplaceLocked(depositMarketplace);
+    }
+
+    /**
      * @notice Sets the IPFS image URI used in dynamically generated NFT metadata.
      * @param newImageURI Image URI such as `ipfs://CID/deposit-certificate.png`.
      */
-    function setMetadataImageURI(string calldata newImageURI) external onlyOwner {
+    function setMetadataImageURI(string calldata newImageURI) external onlyOwnerOrAdmin {
         if (metadataLocked) revert MetadataLocked();
 
         string memory oldImageURI = metadataImageURI;
@@ -759,7 +845,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /**
      * @notice Permanently prevents future metadata image URI updates.
      */
-    function lockMetadata() external onlyOwner {
+    function lockMetadata() external onlyOwnerOrAdmin {
         metadataLocked = true;
 
         emit MetadataPermanentlyLocked();
@@ -768,8 +854,29 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /**
      * @notice Unpauses deposits, withdrawals, and renewal operations after an emergency is resolved.
      */
-    function unpause() external onlyOwner {
+    function unpause() external onlyOwnerOrAdmin {
         _unpause();
+    }
+
+    /**
+     * @notice Returns principal to the NFT owner during an emergency pause without interest or penalty.
+     * @param depositId Active deposit NFT id to close.
+     */
+    function emergencyWithdrawPrincipal(uint256 depositId) external whenPaused {
+        DepositInfo storage deposit = _getActiveDeposit(depositId);
+        address account = msg.sender;
+        if (ownerOf(depositId) != account) revert NotDepositOwner();
+
+        uint256 principal = deposit.principal;
+
+        deposit.status = DepositStatus.Withdrawn;
+        _burn(depositId);
+
+        _releaseDepositReserve(depositId);
+
+        emit Withdrawn(depositId, account, principal, 0, 0, false);
+
+        token.safeTransfer(account, principal);
     }
 
     /**
@@ -936,6 +1043,39 @@ contract SavingCore is ERC721, Ownable, Pausable {
      */
     function _calculateInterest(uint256 principal, uint16 aprBps, uint256 tenorSeconds) private pure returns (uint256 interest) {
         interest = (principal * aprBps * tenorSeconds) / (YEAR_SECONDS * BPS_DENOMINATOR);
+    }
+
+    /**
+     * @dev Records and reserves expected interest for a deposit when the calculated amount is nonzero.
+     */
+    function _reserveDepositInterest(uint256 depositId, uint256 principal, uint16 aprBps, uint256 tenorSeconds) private {
+        uint256 interest = _calculateInterest(principal, aprBps, tenorSeconds);
+        if (interest == 0) return;
+
+        reservedInterestByDeposit[depositId] = interest;
+        vaultManager.reserveInterest(interest);
+    }
+
+    /**
+     * @dev Releases a deposit's reserved interest when the user forfeits or no longer needs it.
+     */
+    function _releaseDepositReserve(uint256 depositId) private {
+        uint256 reservedInterest = reservedInterestByDeposit[depositId];
+        if (reservedInterest == 0) return;
+
+        delete reservedInterestByDeposit[depositId];
+        vaultManager.releaseReservedInterest(reservedInterest);
+    }
+
+    /**
+     * @dev Consumes a deposit's reserved interest when the vault pays or compounds it.
+     */
+    function _consumeDepositReserve(uint256 depositId) private {
+        uint256 reservedInterest = reservedInterestByDeposit[depositId];
+        if (reservedInterest == 0) return;
+
+        delete reservedInterestByDeposit[depositId];
+        vaultManager.consumeReservedInterest(reservedInterest);
     }
 
     /**

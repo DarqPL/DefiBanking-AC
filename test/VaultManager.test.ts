@@ -86,6 +86,68 @@ describe("VaultManager", function () {
     expect(await vaultManager.savingCore()).to.equal(user.address);
   });
 
+  it("lets the owner set an operational admin without letting the admin replace itself", async function () {
+    const { user, newFeeReceiver, vaultManager } = await deployVaultManagerFixture();
+
+    await vaultManager.setAdmin(user.address);
+    expect(await vaultManager.admin()).to.equal(user.address);
+
+    await vaultManager.connect(user).setFeeReceiver(newFeeReceiver.address);
+    expect(await vaultManager.feeReceiver()).to.equal(newFeeReceiver.address);
+
+    await expectCustomError(
+      vaultManager.connect(user).setAdmin.staticCall(newFeeReceiver.address),
+      vaultManager.interface,
+      "OwnableUnauthorizedAccount",
+    );
+    await expectCustomError(vaultManager.setAdmin.staticCall(ethers.ZeroAddress), vaultManager.interface, "InvalidAddress");
+  });
+
+  it("lets the operational admin fund, withdraw, pause, and unpause", async function () {
+    const { user, mockUSDC, vaultManager } = await deployVaultManagerFixture();
+    const vaultAddress = await vaultManager.getAddress();
+    const amount = 1_000n * oneUsdc;
+    const withdrawal = 250n * oneUsdc;
+
+    await vaultManager.setAdmin(user.address);
+    await mockUSDC.mint(user.address, amount);
+    await mockUSDC.connect(user).approve(vaultAddress, amount);
+
+    await vaultManager.connect(user).fundVault(amount);
+    expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(amount);
+
+    await vaultManager.connect(user).withdrawVault(withdrawal);
+    expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(amount - withdrawal);
+
+    await vaultManager.connect(user).pause();
+    expect(await vaultManager.paused()).to.equal(true);
+    await vaultManager.connect(user).unpause();
+    expect(await vaultManager.paused()).to.equal(false);
+  });
+
+  it("locks the SavingCore address against owner and admin changes", async function () {
+    const { user, newFeeReceiver, vaultManager } = await deployVaultManagerFixture();
+
+    await vaultManager.setAdmin(user.address);
+    await vaultManager.connect(user).setSavingCore(user.address);
+    await vaultManager.connect(user).lockSavingCore();
+
+    expect(await vaultManager.savingCoreLocked()).to.equal(true);
+    await expectCustomError(vaultManager.setSavingCore.staticCall(newFeeReceiver.address), vaultManager.interface, "SavingCoreAlreadyLocked");
+    await expectCustomError(
+      vaultManager.connect(user).setSavingCore.staticCall(newFeeReceiver.address),
+      vaultManager.interface,
+      "SavingCoreAlreadyLocked",
+    );
+    await expectCustomError(vaultManager.lockSavingCore.staticCall(), vaultManager.interface, "SavingCoreAlreadyLocked");
+  });
+
+  it("rejects locking before SavingCore is configured", async function () {
+    const { vaultManager } = await deployVaultManagerFixture();
+
+    await expectCustomError(vaultManager.lockSavingCore.staticCall(), vaultManager.interface, "InvalidAddress");
+  });
+
   it("rejects invalid fee receiver updates", async function () {
     const { vaultManager } = await deployVaultManagerFixture();
 
@@ -138,6 +200,58 @@ describe("VaultManager", function () {
     expect(await mockUSDC.balanceOf(deployer.address)).to.equal(ownerBalanceBefore + withdrawAmount);
   });
 
+  it("prevents admin withdrawals of reserved interest while allowing surplus withdrawals", async function () {
+    const { user, mockUSDC, vaultManager } = await deployVaultManagerFixture();
+    const vaultAddress = await vaultManager.getAddress();
+    const fundedAmount = 1_000n * oneUsdc;
+    const reserve = 400n * oneUsdc;
+
+    await mockUSDC.approve(vaultAddress, fundedAmount);
+    await vaultManager.fundVault(fundedAmount);
+    await vaultManager.setSavingCore(user.address);
+
+    await vaultManager.connect(user).reserveInterest(reserve);
+
+    expect(await vaultManager.reservedInterest()).to.equal(reserve);
+    expect(await vaultManager.withdrawableVaultBalance()).to.equal(fundedAmount - reserve);
+    await expectCustomError(vaultManager.withdrawVault.staticCall(fundedAmount - reserve + 1n), vaultManager.interface, "InsufficientVaultBalance");
+
+    await vaultManager.withdrawVault(fundedAmount - reserve);
+    expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(reserve);
+    expect(await vaultManager.withdrawableVaultBalance()).to.equal(0n);
+
+    await vaultManager.connect(user).releaseReservedInterest(reserve);
+    expect(await vaultManager.reservedInterest()).to.equal(0n);
+    expect(await vaultManager.withdrawableVaultBalance()).to.equal(reserve);
+  });
+
+  it("covers reserve accounting zero, underflow, and over-reserved balance branches", async function () {
+    const { user, mockUSDC, vaultManager } = await deployVaultManagerFixture();
+    const vaultAddress = await vaultManager.getAddress();
+    const fundedAmount = 100n * oneUsdc;
+    const reserve = 150n * oneUsdc;
+
+    await mockUSDC.approve(vaultAddress, fundedAmount);
+    await vaultManager.fundVault(fundedAmount);
+    await vaultManager.setSavingCore(user.address);
+
+    await expectCustomError(vaultManager.connect(user).reserveInterest.staticCall(0), vaultManager.interface, "ZeroAmount");
+    await expectCustomError(vaultManager.connect(user).releaseReservedInterest.staticCall(0), vaultManager.interface, "ZeroAmount");
+    await expectCustomError(vaultManager.connect(user).consumeReservedInterest.staticCall(0), vaultManager.interface, "ZeroAmount");
+    await expectCustomError(
+      vaultManager.connect(user).releaseReservedInterest.staticCall(oneUsdc),
+      vaultManager.interface,
+      "InsufficientReservedInterest",
+    );
+
+    await vaultManager.connect(user).reserveInterest(reserve);
+    expect(await vaultManager.reservedInterest()).to.equal(reserve);
+    expect(await vaultManager.withdrawableVaultBalance()).to.equal(0n);
+
+    await vaultManager.connect(user).consumeReservedInterest(oneUsdc);
+    expect(await vaultManager.reservedInterest()).to.equal(reserve - oneUsdc);
+  });
+
   it("rejects zero-amount funding and withdrawals", async function () {
     const { vaultManager } = await deployVaultManagerFixture();
 
@@ -161,15 +275,15 @@ describe("VaultManager", function () {
     await expectCustomError(
       vaultManager.connect(user).setFeeReceiver.staticCall(newFeeReceiver.address),
       vaultManager.interface,
-      "OwnableUnauthorizedAccount",
+      "UnauthorizedAdmin",
     );
     await expectCustomError(
       vaultManager.connect(user).setSavingCore.staticCall(newFeeReceiver.address),
       vaultManager.interface,
-      "OwnableUnauthorizedAccount",
+      "UnauthorizedAdmin",
     );
-    await expectCustomError(vaultManager.connect(user).pause.staticCall(), vaultManager.interface, "OwnableUnauthorizedAccount");
-    await expectCustomError(vaultManager.connect(user).unpause.staticCall(), vaultManager.interface, "OwnableUnauthorizedAccount");
+    await expectCustomError(vaultManager.connect(user).pause.staticCall(), vaultManager.interface, "UnauthorizedAdmin");
+    await expectCustomError(vaultManager.connect(user).unpause.staticCall(), vaultManager.interface, "UnauthorizedAdmin");
   });
 
   it("lets the owner pause and unpause vault token movement", async function () {
