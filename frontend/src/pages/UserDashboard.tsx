@@ -237,10 +237,12 @@ function DepositCard({
   onRenewPlanChange,
   onEarlyWithdraw,
   onWithdraw,
+  onEmergencyWithdraw,
   onRenew,
   onWithdrawInterestAndRenew,
   onClaimInterest,
   canManage = true,
+  isEmergencyMode = false,
 }: {
   deposit: DepositInfo;
   plans: SavingPlan[];
@@ -250,10 +252,12 @@ function DepositCard({
   onRenewPlanChange: (depositId: string, planId: string) => void;
   onEarlyWithdraw: (depositId: bigint) => void;
   onWithdraw: (depositId: bigint) => void;
+  onEmergencyWithdraw: (depositId: bigint) => void;
   onRenew: (depositId: bigint) => void;
   onWithdrawInterestAndRenew: (depositId: bigint) => void;
   onClaimInterest: (depositId: bigint) => void;
   canManage?: boolean;
+  isEmergencyMode?: boolean;
 }) {
   const isActive = deposit.status === 1n;
   const isMatured = now >= deposit.maturityAt;
@@ -300,7 +304,23 @@ function DepositCard({
         )}
       </dl>
 
-      {canManage && isActive && (
+      {canManage && isActive && isEmergencyMode && (
+        <div className="action-row">
+          <p className="deferred-warning">
+            Emergency mode is active. You can recover your principal now, but this action pays no interest and charges no early-withdrawal penalty.
+          </p>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => onEmergencyWithdraw(deposit.id)}
+            disabled={isBusy}
+          >
+            Emergency Withdraw Principal
+          </button>
+        </div>
+      )}
+
+      {canManage && isActive && !isEmergencyMode && (
         <div className="action-row">
           {!isMatured ? (
             <>
@@ -404,6 +424,7 @@ export default function UserDashboard() {
   const [depositAmountInput, setDepositAmountInput] = useState("");
   const [renewPlanByDeposit, setRenewPlanByDeposit] = useState<Record<string, string>>({});
   const [now, setNow] = useState<bigint>(0n);
+  const [savingCorePaused, setSavingCorePaused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [txStatus, setTxStatus] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -427,8 +448,13 @@ export default function UserDashboard() {
     setErrorMessage("");
 
     try {
-      const nextPlanId = (await savingCore.nextPlanId()) as bigint;
+      const [nextPlanId, paused] = await Promise.all([
+        savingCore.nextPlanId() as Promise<bigint>,
+        savingCore.paused() as Promise<boolean>,
+      ]);
       const fetchedPlans: SavingPlan[] = [];
+
+      setSavingCorePaused(paused);
 
       for (let planId = 0n; planId < nextPlanId; planId += 1n) {
         const plan = normalizePlan(planId, await savingCore.savingPlans(planId));
@@ -656,6 +682,16 @@ export default function UserDashboard() {
     );
   }
 
+  function handleEmergencyWithdrawPrincipal(depositId: bigint) {
+    if (!savingCore) return;
+
+    void runTransaction(
+      "Emergency withdrawing principal...",
+      () => savingCore.emergencyWithdrawPrincipal(depositId) as Promise<ethers.TransactionResponse>,
+      "Emergency principal withdrawal confirmed. Interest was not paid for this emergency exit."
+    );
+  }
+
   useEffect(() => {
     queueMicrotask(() => void refreshDashboard());
   }, [refreshDashboard]);
@@ -675,6 +711,11 @@ export default function UserDashboard() {
       {txStatus && <p className="status-message">{txStatus}</p>}
       {alertMessage && <p className="success-message">{alertMessage}</p>}
       {errorMessage && <p className="error-message">{errorMessage}</p>}
+      {savingCorePaused && account && (
+        <p className="deferred-warning">
+          SavingCore is paused. Normal deposit, withdrawal, and renewal actions are disabled. Active NFT owners can use emergency principal withdrawal.
+        </p>
+      )}
 
       <section className="section-panel">
         <div className="section-header">
@@ -700,7 +741,7 @@ export default function UserDashboard() {
         plans={activePlans}
         selectedPlanId={selectedPlanId}
         amount={depositAmountInput}
-        isBusy={isTxBusy || !account}
+        isBusy={isTxBusy || !account || savingCorePaused}
         onPlanChange={setSelectedPlanId}
         onAmountChange={setDepositAmountInput}
         onSubmit={() => void handleOpenDeposit()}
@@ -736,9 +777,11 @@ export default function UserDashboard() {
                   )
                 }
                 onWithdraw={(depositId) => void handleMaturityWithdraw(depositId)}
+                onEmergencyWithdraw={handleEmergencyWithdrawPrincipal}
                 onRenew={handleRenew}
                 onWithdrawInterestAndRenew={handleWithdrawInterestAndRenew}
                 onClaimInterest={handleClaimInterest}
+                isEmergencyMode={savingCorePaused}
               />
             ))
           )}
@@ -766,6 +809,7 @@ export default function UserDashboard() {
                 onRenewPlanChange={handleRenewPlanChange}
                 onEarlyWithdraw={() => undefined}
                 onWithdraw={() => undefined}
+                onEmergencyWithdraw={() => undefined}
                 onRenew={() => undefined}
                 onWithdrawInterestAndRenew={() => undefined}
                 onClaimInterest={handleClaimInterest}
@@ -796,10 +840,12 @@ export default function UserDashboard() {
                   onRenewPlanChange={handleRenewPlanChange}
                   onEarlyWithdraw={() => undefined}
                   onWithdraw={() => undefined}
+                  onEmergencyWithdraw={() => undefined}
                   onRenew={() => undefined}
                   onWithdrawInterestAndRenew={() => undefined}
                   onClaimInterest={handleClaimInterest}
                   canManage={false}
+                  isEmergencyMode={savingCorePaused}
                 />
               ))
             )}
