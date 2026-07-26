@@ -120,6 +120,12 @@ Acceptance criteria:
 - No existing page behavior is removed.
 - Components can be adopted one page at a time.
 
+Status update:
+
+- Added shared `StatusBadge`, `UiStatePanel`, and `TransactionFeedback` components.
+- Added shared formatting helpers in `frontend/src/lib/format.ts` for USDC, APR, dates, addresses, interest, progress, and status tones.
+- Adopted these shared pieces in the User Dashboard first, while keeping existing transaction toasts.
+
 ### Phase 3: User Dashboard Polish
 
 Files likely touched:
@@ -151,6 +157,15 @@ Acceptance criteria:
 - User can still view active and historical deposits.
 - Existing deferred-interest, emergency-withdrawal, and renewal paths still work.
 - Faucet makes demo setup easier without needing an external token transfer.
+
+Status update:
+
+- Added a wallet overview panel with connected address, MockUSDC balance, Sepolia readiness, and faucet action.
+- Added a portfolio summary for active principal, estimated interest, certificate count, next maturity, and deferred interest.
+- Improved plan cards with a more prominent APR, selected-plan state, and status badges.
+- Improved deposit cards with maturity progress, remaining time, colored status badges, and clearer action group labels.
+- Replaced plain empty states on user plans, active deposits, and history with reusable `UiStatePanel` messages.
+- Added inline disabled-action guidance for opening deposits, including no wallet, paused system, no plans, missing amount, and active transaction states.
 
 ### Phase 4: Marketplace Polish
 
@@ -208,6 +223,14 @@ Acceptance criteria:
 - Owner/admin flow remains unchanged at contract level.
 - Unauthorized users still see access denied.
 - Admin actions are clearer and harder to trigger accidentally.
+
+Status update:
+
+- Reused shared formatting helpers and `StatusBadge` in the admin dashboard.
+- Added colored status badges for plan enabled/disabled state, deposit status, audit categories, and contract pause state.
+- Added a simplified interest-vault summary showing interest to pay, USDC safe to withdraw, and whether the vault has enough funds to pay reserved interest.
+- Added fee receiver update UI with address validation and confirmation before calling `VaultManager.setFeeReceiver`.
+- Improved admin table mobile behavior with scroll hints, bordered table containers, hover styling, and tighter small-screen spacing.
 
 ### Phase 5A: Admin Deposit Explorer And Audit Logs
 
@@ -335,25 +358,29 @@ Manual checks:
 
 - [x] Restyle app shell, navbar, panels, cards, forms, buttons, and messages.
 
-- [ ] Add reusable `UiStatePanel`.
+- [x] Add reusable `UiStatePanel`.
 
 - [x] Add reusable `ConfirmationDialog`.
 
-- [ ] Add reusable `TransactionFeedback` or `useTransaction`.
+- [x] Add reusable `TransactionFeedback` or `useTransaction`.
 
 - [x] Add MockUSDC faucet to user dashboard.
 
 - [x] Improve user dashboard copy, empty states, and action confirmations.
 
+- [x] Add user wallet balance card, portfolio summary, selected plan states, deposit progress, and disabled-action guidance.
+
 - [x] Improve marketplace copy, terms readability, and action confirmations.
 
 - [x] Improve admin metric cards and replace APR `window.prompt`.
+
+- [x] Add admin status badges, simplified interest-vault summary, fee receiver update UI, and mobile table polish.
 
 - [x] Add admin deposit explorer with filters and 5-item pagination.
 
 - [x] Add admin audit logs with filters, transaction links, and 5-item pagination.
 
-- [ ] Extract repeated formatting helpers where safe.
+- [x] Extract repeated formatting helpers where safe.
 
 - [x] Run `npm.cmd run lint` from `frontend/`.
 

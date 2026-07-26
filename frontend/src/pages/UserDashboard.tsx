@@ -4,7 +4,22 @@ import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
 import { ConfirmationDialog } from "../components/ConfirmationDialog";
+import { StatusBadge } from "../components/StatusBadge";
+import { TransactionFeedback } from "../components/TransactionFeedback";
 import { ToastStack, type ToastItem } from "../components/ToastStack";
+import { UiStatePanel } from "../components/UiStatePanel";
+import {
+  calculateInterest,
+  formatAddress,
+  formatApr,
+  formatDate,
+  formatDepositLimit,
+  formatRemainingTime,
+  formatUsdc,
+  getProgressPercent,
+  isSameAddress,
+  statusToneForLabel,
+} from "../lib/format";
 
 type SavingPlan = {
   id: bigint;
@@ -51,27 +66,6 @@ const DEPOSIT_STATUS: Record<string, string> = {
 
 const CHUNK_SIZE = 2_000;
 const FAUCET_AMOUNT = ethers.parseUnits("1000", 6);
-
-function formatUsdc(value: bigint) {
-  return `${ethers.formatUnits(value, 6)} USDC`;
-}
-
-function formatDepositLimit(value: bigint, label: "minimum" | "maximum") {
-  return value === 0n ? `No ${label}` : formatUsdc(value);
-}
-
-function formatApr(aprBps: bigint) {
-  return `${Number(aprBps) / 100}%`;
-}
-
-function formatDate(timestamp: bigint) {
-  return new Date(Number(timestamp) * 1000).toLocaleString();
-}
-
-function calculateInterest(deposit: DepositInfo) {
-  const tenorSeconds = deposit.maturityAt - deposit.startAt;
-  return (deposit.principal * deposit.aprBpsAtOpen * tenorSeconds) / (365n * 24n * 60n * 60n * 10_000n);
-}
 
 function isAmountInPlanRange(plan: SavingPlan | undefined, amount: bigint) {
   if (!plan) return false;
@@ -126,10 +120,6 @@ function normalizeDeposit(id: bigint, deposit: unknown): DepositInfo {
   };
 }
 
-function isSameAddress(left: string | null | undefined, right: string | null | undefined) {
-  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
-}
-
 function parsedEventNames(receipt: ethers.TransactionReceipt, contractInterface: ethers.Interface) {
   return receipt.logs
     .map((log) => {
@@ -159,13 +149,25 @@ async function queryFilterInChunks(
   return events;
 }
 
-function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: bigint) => void }) {
+function PlanCard({
+  plan,
+  isSelected,
+  onSelect,
+}: {
+  plan: SavingPlan;
+  isSelected: boolean;
+  onSelect: (planId: bigint) => void;
+}) {
   return (
-    <article className="plan-card">
+    <article className={`plan-card${isSelected ? " plan-card-selected" : ""}`}>
       <div className="card-heading-row">
-        <h3>{plan.tenorDays.toString()} Days</h3>
-        <span className="pill">APR {formatApr(plan.aprBps)}</span>
+        <h3>Savings Plan #{plan.id.toString()}</h3>
+        {isSelected ? <StatusBadge tone="success">Selected</StatusBadge> : <StatusBadge tone="info">Available</StatusBadge>}
       </div>
+      <p className="plan-rate">
+        {formatApr(plan.aprBps)} <span>APR</span>
+      </p>
+      <p className="plan-tenor">{plan.tenorDays.toString()} day fixed term</p>
       <dl className="meta-list">
         <div>
           <dt>Deposit Range</dt>
@@ -178,8 +180,8 @@ function PlanCard({ plan, onSelect }: { plan: SavingPlan; onSelect: (planId: big
           <dd>{formatApr(plan.earlyWithdrawPenaltyBps)}</dd>
         </div>
       </dl>
-      <button className="primary-button" type="button" onClick={() => onSelect(plan.id)}>
-        Select Plan
+      <button className={isSelected ? "secondary-button" : "primary-button"} type="button" onClick={() => onSelect(plan.id)}>
+        {isSelected ? "Selected Plan" : "Select Plan"}
       </button>
     </article>
   );
@@ -190,6 +192,7 @@ function OpenDepositForm({
   selectedPlanId,
   amount,
   isBusy,
+  disabledReason,
   onPlanChange,
   onAmountChange,
   onSubmit,
@@ -198,6 +201,7 @@ function OpenDepositForm({
   selectedPlanId: string;
   amount: string;
   isBusy: boolean;
+  disabledReason: string | null;
   onPlanChange: (planId: string) => void;
   onAmountChange: (amount: string) => void;
   onSubmit: () => void;
@@ -231,9 +235,10 @@ function OpenDepositForm({
             disabled={isBusy}
           />
         </label>
-        <button className="primary-button" type="button" onClick={onSubmit} disabled={isBusy || plans.length === 0}>
+        <button className="primary-button" type="button" onClick={onSubmit} disabled={Boolean(disabledReason)}>
           Open Deposit
         </button>
+        {disabledReason && <p className="helper-text">{disabledReason}</p>}
       </div>
     </section>
   );
@@ -279,12 +284,23 @@ function DepositCard({
   const compoundedPrincipal = deposit.principal + maturityInterest;
   const canCompoundRenew = deposit.canPayInterest && isAmountInPlanRange(selectedRenewPlan, compoundedPrincipal);
   const canInterestOnlyRenew = deposit.canPayInterest && isAmountInPlanRange(selectedRenewPlan, deposit.principal);
+  const statusLabel = isActive && isMatured ? "Matured" : DEPOSIT_STATUS[deposit.status.toString()] ?? "Unknown";
+  const progress = getProgressPercent(deposit.startAt, deposit.maturityAt, now);
 
   return (
     <article className="deposit-card">
       <div className="card-heading-row">
         <h3>Deposit #{deposit.id.toString()}</h3>
-        <span className="pill">{DEPOSIT_STATUS[deposit.status.toString()] ?? "Unknown"}</span>
+        <StatusBadge tone={statusToneForLabel(statusLabel)}>{statusLabel}</StatusBadge>
+      </div>
+      <div className="deposit-progress" aria-label={`Deposit maturity progress ${progress}%`}>
+        <div className="deposit-progress-track">
+          <div className="deposit-progress-fill" style={{ width: `${progress}%` }} />
+        </div>
+        <div className="deposit-progress-label">
+          <span>{progress}% complete</span>
+          <span>{formatRemainingTime(now, deposit.maturityAt)}</span>
+        </div>
       </div>
       <dl className="meta-list">
         <div>
@@ -316,7 +332,8 @@ function DepositCard({
       </dl>
 
       {canManage && isActive && isEmergencyMode && (
-        <div className="action-row">
+        <div className="action-group">
+          <p className="action-group-title">Emergency mode</p>
           <p className="deferred-warning">
             Emergency mode is active. You can recover your principal now, but this action pays no interest and charges no early-withdrawal penalty.
           </p>
@@ -332,9 +349,10 @@ function DepositCard({
       )}
 
       {canManage && isActive && !isEmergencyMode && (
-        <div className="action-row">
+        <div className="action-group">
           {!isMatured ? (
             <>
+              <p className="action-group-title">Early exit</p>
               <p className="early-warning">
                 Warning: Early withdrawal incurs a {formatApr(deposit.penaltyBpsAtOpen)} penalty. You will lose{" "}
                 {formatUsdc(earlyPenalty)} and receive {formatUsdc(earlyReceiveAmount)}.
@@ -350,6 +368,7 @@ function DepositCard({
             </>
           ) : (
             <>
+              <p className="action-group-title">Maturity actions</p>
               {!deposit.canPayInterest && maturityInterest > 0n && (
                 <p className="deferred-warning">
                   Vault liquidity is not enough to pay your interest right now. If you withdraw, you will receive your
@@ -359,6 +378,7 @@ function DepositCard({
               <button className="primary-button" type="button" onClick={() => onWithdraw(deposit.id)} disabled={isBusy}>
                 {deposit.canPayInterest ? "Withdraw Principal + Interest" : "Withdraw Principal Only"}
               </button>
+              <p className="action-group-title">Renewal options</p>
               <select
                 value={renewPlanId}
                 onChange={(event) => onRenewPlanChange(deposit.id.toString(), event.target.value)}
@@ -434,6 +454,7 @@ export default function UserDashboard() {
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [depositAmountInput, setDepositAmountInput] = useState("");
   const [renewPlanByDeposit, setRenewPlanByDeposit] = useState<Record<string, string>>({});
+  const [mockUsdcBalance, setMockUsdcBalance] = useState<bigint>(0n);
   const [now, setNow] = useState<bigint>(0n);
   const [savingCorePaused, setSavingCorePaused] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -454,6 +475,25 @@ export default function UserDashboard() {
     [account, historyDeposits]
   );
   const isTxBusy = txStatus.length > 0;
+  const portfolioSummary = useMemo(() => {
+    const totalPrincipal = activeDeposits.reduce((total, deposit) => total + deposit.principal, 0n);
+    const estimatedInterest = activeDeposits.reduce((total, deposit) => total + calculateInterest(deposit), 0n);
+    const deferredInterest = deferredInterestDeposits.reduce((total, deposit) => total + deposit.unpaidInterest, 0n);
+    const nextMaturity = activeDeposits.reduce<bigint | null>((current, deposit) => {
+      if (current === null || deposit.maturityAt < current) return deposit.maturityAt;
+      return current;
+    }, null);
+
+    return { totalPrincipal, estimatedInterest, deferredInterest, nextMaturity };
+  }, [activeDeposits, deferredInterestDeposits]);
+  const openDepositDisabledReason = useMemo(() => {
+    if (!account) return "Connect your wallet first."
+    if (savingCorePaused) return "SavingCore is paused; normal deposits are disabled."
+    if (activePlans.length === 0) return "No enabled saving plans are available."
+    if (!depositAmountInput) return "Enter a MockUSDC amount to open a certificate."
+    if (isTxBusy) return "Wait for the current transaction to finish."
+    return null
+  }, [account, activePlans.length, depositAmountInput, isTxBusy, savingCorePaused]);
   const toastItems = useMemo<ToastItem[]>(() => {
     const items: ToastItem[] = [];
     if (txStatus) items.push({ id: `status:${txStatus}`, message: txStatus, tone: "status" });
@@ -516,6 +556,7 @@ export default function UserDashboard() {
       }
 
       if (!account) {
+        setMockUsdcBalance(0n);
         setActiveDeposits([]);
         setHistoryDeposits([]);
         return;
@@ -525,6 +566,10 @@ export default function UserDashboard() {
         setActiveDeposits([]);
         setHistoryDeposits([]);
         return;
+      }
+
+      if (mockUSDC) {
+        setMockUsdcBalance((await mockUSDC.balanceOf(account)) as bigint);
       }
 
       const openedEvents = await queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider);
@@ -599,7 +644,7 @@ export default function UserDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, [account, parseError, provider, savingCore, vaultManager]);
+  }, [account, mockUSDC, parseError, provider, savingCore, vaultManager]);
 
   const runTransaction = useCallback(async (
     label: string,
@@ -829,10 +874,16 @@ export default function UserDashboard() {
         <p>Open fixed-term MockUSDC savings, receive an on-chain deposit certificate, and manage withdrawals, renewals, and marketplace-ready positions.</p>
       </section>
 
+      <TransactionFeedback status={txStatus} success={alertMessage} error={errorMessage} />
+
       {!account && (
-        <p className="status-message">Connect your wallet to open deposits and view your deposit history.</p>
+        <UiStatePanel
+          kind="info"
+          title="Connect your wallet"
+          message="Connect MetaMask on Sepolia to mint test MockUSDC, open savings certificates, and view your positions."
+        />
       )}
-      {isLoading && <p className="status-message">Loading contract data...</p>}
+      {isLoading && <UiStatePanel kind="loading" title="Loading contract data" message="Reading plans, balances, and deposit certificates from Sepolia." />}
       {savingCorePaused && account && (
         <p className="deferred-warning">
           SavingCore is paused. Normal deposit, withdrawal, and renewal actions are disabled. Active NFT owners can use emergency principal withdrawal.
@@ -841,15 +892,59 @@ export default function UserDashboard() {
 
       <section className="section-panel">
         <div className="section-header">
-          <p className="eyebrow">Test Token Faucet</p>
-          <h2>Get demo MockUSDC</h2>
-          <p>MockUSDC is a freely mintable Sepolia test token for this coursework demo. It has no real-world monetary value.</p>
+          <p className="eyebrow">Wallet Overview</p>
+          <h2>Your demo banking wallet</h2>
+          <p>Use freely mintable MockUSDC on Sepolia to test the complete savings lifecycle.</p>
         </div>
-        <div className="action-row">
-          <button className="primary-button" type="button" onClick={handleMintMockUsdc} disabled={!account || isTxBusy || !mockUSDC}>
-            Mint 1,000 MockUSDC
-          </button>
-          {!account && <p className="helper-text">Connect your wallet first, then mint test tokens for opening a savings certificate.</p>}
+        <div className="wallet-overview-grid">
+          <dl className="metric-card">
+            <dt>Connected Wallet</dt>
+            <dd title={account ?? undefined}>{formatAddress(account)}</dd>
+          </dl>
+          <dl className="metric-card">
+            <dt>MockUSDC Balance</dt>
+            <dd>{formatUsdc(mockUsdcBalance)}</dd>
+          </dl>
+          <div className="metric-card">
+            <p>Network</p>
+            <StatusBadge tone={account ? "success" : "warning"}>{account ? "Sepolia Ready" : "Wallet Required"}</StatusBadge>
+          </div>
+          <div className="metric-card">
+            <p>Faucet</p>
+            <button className="primary-button compact-button" type="button" onClick={handleMintMockUsdc} disabled={!account || isTxBusy || !mockUSDC}>
+              Mint 1,000 MockUSDC
+            </button>
+            {!account && <p className="helper-text">Connect wallet first.</p>}
+          </div>
+        </div>
+      </section>
+
+      <section className="section-panel">
+        <div className="section-header">
+          <p className="eyebrow">Portfolio</p>
+          <h2>Savings summary</h2>
+        </div>
+        <div className="portfolio-summary-grid">
+          <dl className="metric-card">
+            <dt>Active Principal</dt>
+            <dd>{formatUsdc(portfolioSummary.totalPrincipal)}</dd>
+          </dl>
+          <dl className="metric-card">
+            <dt>Estimated Interest</dt>
+            <dd>{formatUsdc(portfolioSummary.estimatedInterest)}</dd>
+          </dl>
+          <dl className="metric-card">
+            <dt>Certificates</dt>
+            <dd>{activeDeposits.length.toString()}</dd>
+          </dl>
+          <dl className="metric-card">
+            <dt>Next Maturity</dt>
+            <dd>{portfolioSummary.nextMaturity ? formatDate(portfolioSummary.nextMaturity) : "No active certificates"}</dd>
+          </dl>
+          <dl className="metric-card">
+            <dt>Deferred Interest</dt>
+            <dd>{formatUsdc(portfolioSummary.deferredInterest)}</dd>
+          </dl>
         </div>
       </section>
 
@@ -860,12 +955,13 @@ export default function UserDashboard() {
         </div>
         <div className="card-grid">
           {activePlans.length === 0 ? (
-            <p>No enabled plans found.</p>
+            <UiStatePanel kind="empty" title="No enabled plans" message="An admin must enable a savings plan before users can open certificates." />
           ) : (
             activePlans.map((plan) => (
               <PlanCard
                 key={plan.id.toString()}
                 plan={plan}
+                isSelected={plan.id.toString() === selectedPlanId}
                 onSelect={(planId) => setSelectedPlanId(planId.toString())}
               />
             ))
@@ -878,6 +974,7 @@ export default function UserDashboard() {
         selectedPlanId={selectedPlanId}
         amount={depositAmountInput}
         isBusy={isTxBusy || !account || savingCorePaused}
+        disabledReason={openDepositDisabledReason}
         onPlanChange={setSelectedPlanId}
         onAmountChange={setDepositAmountInput}
         onSubmit={() => {
@@ -910,7 +1007,11 @@ export default function UserDashboard() {
         </div>
         <div className="card-grid">
           {activeDeposits.length === 0 ? (
-            <p>No active deposit NFTs found for this wallet.</p>
+            <UiStatePanel
+              kind="empty"
+              title="No active certificates"
+              message={account ? "Choose a plan and open your first fixed-term MockUSDC savings certificate." : "Connect your wallet to load active savings certificates."}
+            />
           ) : (
             activeDeposits.map((deposit) => (
               <DepositCard
@@ -1012,7 +1113,11 @@ export default function UserDashboard() {
           </div>
           <div className="card-grid">
             {historyDeposits.length === 0 ? (
-              <p>No history found for this wallet.</p>
+              <UiStatePanel
+                kind="empty"
+                title="No certificate history"
+                message="Closed, renewed, transferred, and marketplace-escrowed certificates will appear here after activity."
+              />
             ) : (
               historyDeposits.map((deposit) => (
                 <DepositCard

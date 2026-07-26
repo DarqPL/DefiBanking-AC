@@ -5,7 +5,17 @@ import { CONTRACT_ADDRESSES, DEPLOYMENT_BLOCKS } from "../config";
 import { useWeb3 } from "../useWeb3";
 import { parseTransactionError } from "../utils/parseTransactionError";
 import { ConfirmationDialog } from "../components/ConfirmationDialog";
+import { StatusBadge } from "../components/StatusBadge";
+import { UiStatePanel } from "../components/UiStatePanel";
 import { ToastStack, type ToastItem } from "../components/ToastStack";
+import {
+  formatBps,
+  formatDate,
+  formatDepositLimit,
+  formatUsdc,
+  isSameAddress,
+  statusToneForLabel,
+} from "../lib/format";
 
 type SavingPlan = {
   id: bigint;
@@ -104,14 +114,6 @@ const AUDIT_FILTER_LABELS: Record<AuditFilter, string> = {
   marketplace: "Marketplace",
 };
 
-function formatUsdc(value: bigint) {
-  return `${ethers.formatUnits(value, 6)} USDC`;
-}
-
-function formatDepositLimit(value: bigint, label: "minimum" | "maximum") {
-  return value === 0n ? `No ${label}` : formatUsdc(value);
-}
-
 function parseUsdc(value: string) {
   return ethers.parseUnits(value || "0", 6);
 }
@@ -120,21 +122,9 @@ function percentToBps(value: string) {
   return Math.round(Number(value || "0") * 100);
 }
 
-function formatBps(value: bigint) {
-  return `${Number(value) / 100}%`;
-}
-
-function formatDate(timestamp: bigint) {
-  return new Date(Number(timestamp) * 1000).toLocaleString();
-}
-
 function formatAddress(address: string | null) {
   if (!address) return "Closed / burned";
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function isSameAddress(left: string | null | undefined, right: string | null | undefined) {
-  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
 }
 
 function paginate<T>(items: T[], page: number) {
@@ -183,6 +173,7 @@ export default function AdminDashboard() {
   const [reservedInterest, setReservedInterest] = useState<bigint>(0n);
   const [withdrawableVaultBalance, setWithdrawableVaultBalance] = useState<bigint>(0n);
   const [feeReceiver, setFeeReceiver] = useState("");
+  const [newFeeReceiver, setNewFeeReceiver] = useState("");
   const [feeReceiverBalance, setFeeReceiverBalance] = useState<bigint>(0n);
   const [savingCorePaused, setSavingCorePaused] = useState(false);
   const [vaultManagerPaused, setVaultManagerPaused] = useState(false);
@@ -219,6 +210,17 @@ export default function AdminDashboard() {
     return auditFilter === "all" ? auditLogs : auditLogs.filter((log) => log.category === auditFilter);
   }, [auditFilter, auditLogs]);
   const auditPagination = paginate(filteredAuditLogs, auditPage);
+  const hasVaultShortfall = reservedInterest > vaultBalance;
+  const vaultPaymentStatusLabel = reservedInterest === 0n ? "No Interest Due" : hasVaultShortfall ? "Not Enough To Pay" : "Enough To Pay";
+  const feeReceiverDisabledReason = !newFeeReceiver
+    ? "Enter a new fee receiver address."
+    : !ethers.isAddress(newFeeReceiver)
+      ? "Enter a valid Ethereum address."
+      : feeReceiver && isSameAddress(newFeeReceiver, feeReceiver)
+        ? "This is already the active fee receiver."
+        : isBusy
+          ? "Wait for the current admin action to finish."
+          : null;
   const toastItems: ToastItem[] = [
     ...(txStatus ? [{ id: `status:${txStatus}`, message: txStatus, tone: "status" as const }] : []),
     ...(alertMessage ? [{ id: `success:${alertMessage}`, message: alertMessage, tone: "success" as const }] : []),
@@ -459,6 +461,29 @@ export default function AdminDashboard() {
     );
   }
 
+  function handleUpdateFeeReceiver() {
+    if (!vaultManager || feeReceiverDisabledReason || !ethers.isAddress(newFeeReceiver)) return;
+
+    const nextReceiver = ethers.getAddress(newFeeReceiver);
+    requestConfirmation(
+      {
+        title: "Update fee receiver?",
+        description: "Future early-withdrawal penalties will be sent to this address. Existing deposits are not otherwise changed.",
+        confirmLabel: "Update Receiver",
+        details: [
+          { label: "Current receiver", value: feeReceiver || "Not loaded" },
+          { label: "New receiver", value: nextReceiver },
+        ],
+      },
+      () =>
+        void runTransaction(
+          "Updating fee receiver...",
+          () => vaultManager.setFeeReceiver(nextReceiver) as Promise<ethers.TransactionResponse>,
+          "Fee receiver updated."
+        ).then(() => setNewFeeReceiver(""))
+    );
+  }
+
   function handleCreatePlan() {
     if (!savingCore) return;
 
@@ -628,7 +653,7 @@ export default function AdminDashboard() {
       {adminRole && adminRole !== "unauthorized" && (
         <p className="status-message">Connected role: {adminRole === "owner" ? "Deployer owner" : "Operational admin"}</p>
       )}
-      {isLoading && <p className="status-message">Loading admin data...</p>}
+      {isLoading && <UiStatePanel kind="loading" title="Loading admin data" message="Refreshing plans, vault balances, deposits, and audit logs from Sepolia." />}
 
       <section className="section-panel">
         <div className="section-header">
@@ -671,10 +696,12 @@ export default function AdminDashboard() {
           <article className="plan-card">
             <p className="eyebrow">SavingCore</p>
             <h3>{savingCorePaused ? "Paused" : "Active"}</h3>
+            <StatusBadge tone={savingCorePaused ? "warning" : "success"}>{savingCorePaused ? "Paused" : "Active"}</StatusBadge>
           </article>
           <article className="plan-card">
             <p className="eyebrow">VaultManager</p>
             <h3>{vaultManagerPaused ? "Paused" : "Active"}</h3>
+            <StatusBadge tone={vaultManagerPaused ? "warning" : "success"}>{vaultManagerPaused ? "Paused" : "Active"}</StatusBadge>
           </article>
         </div>
 
@@ -726,6 +753,27 @@ export default function AdminDashboard() {
           <button className="secondary-button" type="button" onClick={handlePauseVaultManager} disabled={isBusy}>
             {vaultManagerPaused ? "Unpause VaultManager" : "Pause VaultManager"}
           </button>
+        </div>
+
+        <div className="inline-form-grid admin-controls">
+          <label className="form-row">
+            New Fee Receiver
+            <input
+              placeholder="0x..."
+              value={newFeeReceiver}
+              onChange={(event) => setNewFeeReceiver(event.target.value)}
+              disabled={isBusy}
+            />
+          </label>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={handleUpdateFeeReceiver}
+            disabled={Boolean(feeReceiverDisabledReason)}
+          >
+            Update Fee Receiver
+          </button>
+          {feeReceiverDisabledReason && <p className="helper-text">{feeReceiverDisabledReason}</p>}
         </div>
       </section>
 
@@ -812,6 +860,7 @@ export default function AdminDashboard() {
           <h2>All saving plans</h2>
         </div>
         <div className="admin-table-wrap">
+          <p className="table-scroll-hint">Scroll sideways to review all plan controls on smaller screens.</p>
           <table className="admin-table">
             <thead>
               <tr>
@@ -839,7 +888,9 @@ export default function AdminDashboard() {
                     <td>{formatDepositLimit(plan.minDeposit, "minimum")}</td>
                     <td>{formatDepositLimit(plan.maxDeposit, "maximum")}</td>
                     <td>{formatBps(plan.earlyWithdrawPenaltyBps)}</td>
-                    <td>{plan.enabled ? "Enabled" : "Disabled"}</td>
+                    <td>
+                      <StatusBadge tone={plan.enabled ? "success" : "danger"}>{plan.enabled ? "Enabled" : "Disabled"}</StatusBadge>
+                    </td>
                     <td>
                       <div className="table-actions">
                         <input
@@ -883,6 +934,32 @@ export default function AdminDashboard() {
 
       <section className="section-panel">
         <div className="section-header">
+          <p className="eyebrow">Interest Vault</p>
+          <h2>Vault payment summary</h2>
+          <p>Simple view of how much interest the vault needs to pay, how much USDC can be withdrawn, and whether the vault is funded enough.</p>
+        </div>
+        <div className="admin-summary-grid">
+          <article className="plan-card">
+            <p className="eyebrow">Interest To Pay</p>
+            <h3>{formatUsdc(reservedInterest)}</h3>
+            <p>Total interest currently reserved for user withdrawals and renewals.</p>
+          </article>
+          <article className="plan-card">
+            <p className="eyebrow">Can Withdraw</p>
+            <h3>{formatUsdc(withdrawableVaultBalance)}</h3>
+            <p>USDC the admin can withdraw without using reserved interest.</p>
+          </article>
+          <article className="plan-card">
+            <p className="eyebrow">Vault Status</p>
+            <h3>{vaultPaymentStatusLabel}</h3>
+            <StatusBadge tone={hasVaultShortfall ? "danger" : "success"}>{vaultPaymentStatusLabel}</StatusBadge>
+            <p>Vault balance: {formatUsdc(vaultBalance)}</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="section-panel">
+        <div className="section-header">
           <p className="eyebrow">Deposit Explorer</p>
           <div className="section-title-row">
             <div>
@@ -907,6 +984,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="admin-table-wrap">
+          <p className="table-scroll-hint">Scroll sideways to inspect every deposit field on smaller screens.</p>
           <table className="admin-table">
             <thead>
               <tr>
@@ -930,7 +1008,11 @@ export default function AdminDashboard() {
                 depositPagination.pageItems.map((deposit) => (
                   <tr key={deposit.id.toString()}>
                     <td>{deposit.id.toString()}</td>
-                    <td>{DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown"}</td>
+                    <td>
+                      <StatusBadge tone={statusToneForLabel(DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown")}>
+                        {DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown"}
+                      </StatusBadge>
+                    </td>
                     <td className="address-text" title={deposit.owner ?? undefined}>{formatAddress(deposit.owner)}</td>
                     <td>{deposit.planId.toString()}</td>
                     <td>{formatUsdc(deposit.principal)}</td>
@@ -985,6 +1067,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="admin-table-wrap">
+          <p className="table-scroll-hint">Scroll sideways to review sender and transaction details on smaller screens.</p>
           <table className="admin-table">
             <thead>
               <tr>
@@ -1006,7 +1089,9 @@ export default function AdminDashboard() {
                 auditPagination.pageItems.map((log) => (
                   <tr key={log.id}>
                     <td>{log.blockNumber}</td>
-                    <td>{AUDIT_FILTER_LABELS[log.category]}</td>
+                    <td>
+                      <StatusBadge tone={statusToneForLabel(AUDIT_FILTER_LABELS[log.category])}>{AUDIT_FILTER_LABELS[log.category]}</StatusBadge>
+                    </td>
                     <td>{log.contractName}</td>
                     <td>{log.action}</td>
                     <td>{log.summary}</td>
