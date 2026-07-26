@@ -33,7 +33,7 @@ type ConfirmationState = {
   details?: { label: string; value: string }[];
 };
 
-const CHUNK_SIZE = 2_000;
+const CHUNK_SIZE = 10_000;
 const LISTINGS_PAGE_SIZE = 12;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -425,16 +425,21 @@ export default function Marketplace() {
       if (pageForFetch !== listingPage) setListingPage(pageForFetch);
       setTotalListingCount(totalCount);
 
-      const fetchedListings: MarketplaceListing[] = [];
       const startIndex = totalCount - 1 - pageForFetch * LISTINGS_PAGE_SIZE;
       const endIndex = Math.max(-1, startIndex - LISTINGS_PAGE_SIZE);
 
-      for (let index = startIndex; index > endIndex; index -= 1) {
-        const depositId = (await depositMarketplace.listedDepositIds(index)) as bigint;
-        const listing = await depositMarketplace.listings(depositId);
-        const deposit = normalizeDeposit(depositId, await savingCore.deposits(depositId));
-        fetchedListings.push(normalizeListing(depositId, listing, deposit));
-      }
+      const listingIndexes = Array.from({ length: Math.max(0, startIndex - endIndex) }, (_, offset) => startIndex - offset);
+      const fetchedListings = await Promise.all(
+        listingIndexes.map(async (index) => {
+          const depositId = (await depositMarketplace.listedDepositIds(index)) as bigint;
+          const [listing, rawDeposit] = await Promise.all([
+            depositMarketplace.listings(depositId),
+            savingCore.deposits(depositId),
+          ]);
+          const deposit = normalizeDeposit(depositId, rawDeposit);
+          return normalizeListing(depositId, listing, deposit);
+        })
+      );
       setListings(fetchedListings);
 
       if (!account || !provider) {
@@ -456,16 +461,15 @@ export default function Marketplace() {
         if (depositId !== undefined) sellerListingIds.add(depositId.toString());
       }
 
-      const fetchedMyListings: MarketplaceListing[] = [];
-      for (const depositId of sellerListingIds) {
+      const fetchedMyListings = (await Promise.all([...sellerListingIds].map(async (depositId) => {
         const listing = await depositMarketplace.listings(depositId);
         const values = listing as { seller: string; price: bigint };
-        if (isSameAddress(values.seller, ZERO_ADDRESS)) continue;
+        if (isSameAddress(values.seller, ZERO_ADDRESS)) return null;
 
         const normalizedDepositId = BigInt(depositId);
         const deposit = normalizeDeposit(normalizedDepositId, await savingCore.deposits(normalizedDepositId));
-        fetchedMyListings.push(normalizeListing(normalizedDepositId, listing, deposit));
-      }
+        return normalizeListing(normalizedDepositId, listing, deposit);
+      }))).filter((listing): listing is MarketplaceListing => listing !== null);
       setMyListings(fetchedMyListings.sort((left, right) => Number(right.depositId - left.depositId)));
 
       const candidateIds = new Set<string>();
@@ -476,10 +480,9 @@ export default function Marketplace() {
         if (depositId !== undefined) candidateIds.add(depositId.toString());
       }
 
-      const fetchedListableDeposits: DepositInfo[] = [];
-      for (const depositId of candidateIds) {
+      const fetchedListableDeposits = (await Promise.all([...candidateIds].map(async (depositId) => {
         const deposit = normalizeDeposit(BigInt(depositId), await savingCore.deposits(depositId));
-        if (deposit.status !== 1n) continue;
+        if (deposit.status !== 1n) return null;
 
         try {
           deposit.owner = ethers.getAddress((await savingCore.ownerOf(deposit.id)) as string);
@@ -487,11 +490,11 @@ export default function Marketplace() {
           deposit.owner = null;
         }
 
-        if (!isSameAddress(deposit.owner, account)) continue;
-        if (!((await depositMarketplace.isListable(deposit.id)) as boolean)) continue;
+        if (!isSameAddress(deposit.owner, account)) return null;
+        if (!((await depositMarketplace.isListable(deposit.id)) as boolean)) return null;
 
-        fetchedListableDeposits.push(deposit);
-      }
+        return deposit;
+      }))).filter((deposit): deposit is DepositInfo => deposit !== null);
 
       setListableDeposits(fetchedListableDeposits.sort((left, right) => Number(right.id - left.id)));
     } catch (error) {

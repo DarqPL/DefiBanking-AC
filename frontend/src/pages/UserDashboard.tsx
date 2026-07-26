@@ -64,7 +64,7 @@ const DEPOSIT_STATUS: Record<string, string> = {
   "5": "Auto Renewed",
 };
 
-const CHUNK_SIZE = 2_000;
+const CHUNK_SIZE = 10_000;
 const FAUCET_AMOUNT = ethers.parseUnits("1000", 6);
 
 function isAmountInPlanRange(plan: SavingPlan | undefined, amount: bigint) {
@@ -538,14 +538,14 @@ export default function UserDashboard() {
         savingCore.nextPlanId() as Promise<bigint>,
         savingCore.paused() as Promise<boolean>,
       ]);
-      const fetchedPlans: SavingPlan[] = [];
-
       setSavingCorePaused(paused);
 
-      for (let planId = 0n; planId < nextPlanId; planId += 1n) {
-        const plan = normalizePlan(planId, await savingCore.savingPlans(planId));
-        if (plan.enabled) fetchedPlans.push(plan);
-      }
+      const fetchedPlans = (await Promise.all(
+        Array.from({ length: Number(nextPlanId) }, async (_, planIndex) => {
+          const planId = BigInt(planIndex);
+          return normalizePlan(planId, await savingCore.savingPlans(planId));
+        })
+      )).filter((plan) => plan.enabled);
 
       setPlans(fetchedPlans);
       setSelectedPlanId((current) => current || fetchedPlans[0]?.id.toString() || "");
@@ -572,11 +572,13 @@ export default function UserDashboard() {
         setMockUsdcBalance((await mockUSDC.balanceOf(account)) as bigint);
       }
 
-      const openedEvents = await queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider);
-      const transferInEvents = await queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider);
-      const transferOutEvents = await queryFilterInChunks(savingCore, savingCore.filters.Transfer(account, null, null), provider);
-      const interestDeferredEvents = await queryFilterInChunks(savingCore, savingCore.filters.InterestDeferred(null, account), provider);
-      const interestClaimedEvents = await queryFilterInChunks(savingCore, savingCore.filters.InterestClaimed(null, account), provider);
+      const [openedEvents, transferInEvents, transferOutEvents, interestDeferredEvents, interestClaimedEvents] = await Promise.all([
+        queryFilterInChunks(savingCore, savingCore.filters.DepositOpened(null, account), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.Transfer(null, account, null), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.Transfer(account, null, null), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.InterestDeferred(null, account), provider),
+        queryFilterInChunks(savingCore, savingCore.filters.InterestClaimed(null, account), provider),
+      ]);
 
       const candidateIds = new Set<string>();
 

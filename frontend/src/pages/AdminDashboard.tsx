@@ -84,7 +84,7 @@ const defaultCreatePlanForm: CreatePlanForm = {
 };
 
 const ADMIN_PAGE_SIZE = 5;
-const CHUNK_SIZE = 2_000;
+const CHUNK_SIZE = 10_000;
 
 const DEPOSIT_STATUS_LABELS: Record<string, string> = {
   "0": "None",
@@ -231,6 +231,80 @@ export default function AdminDashboard() {
     return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
   }, [mockUSDC, savingCore, vaultManager]);
 
+  const refreshAuditLogs = useCallback(async () => {
+    if (!provider) return;
+
+    const nextAuditLogs: AuditLogEntry[] = [];
+
+    const appendAuditLogs = async (
+      contract: ethers.Contract | null,
+      contractName: string,
+      startBlock: number,
+      events: { name: string; category: AuditLogEntry["category"]; action: string; summarize: (args: ethers.Result | null) => string }[],
+    ) => {
+      if (!contract) return;
+
+      const logsByType = await Promise.all(events.map(async (eventConfig) => {
+        const filterFactory = (contract.filters as unknown as Record<string, (() => ethers.DeferredTopicFilter) | undefined>)[eventConfig.name];
+        if (!filterFactory) return [];
+
+        const eventsForType = await queryFilterInChunks(contract, filterFactory(), provider, startBlock);
+        return eventsForType.map((event) => ({ event, eventConfig }));
+      }));
+
+      for (const { event, eventConfig } of logsByType.flat()) {
+        nextAuditLogs.push({
+          id: `${event.transactionHash}:${event.index}`,
+          category: eventConfig.category,
+          contractName,
+          action: eventConfig.action,
+          summary: eventConfig.summarize(readEventArgs(event)),
+          blockNumber: event.blockNumber,
+          transactionHash: event.transactionHash,
+          logIndex: event.index,
+          actor: null,
+        });
+      }
+    };
+
+    try {
+      await Promise.all([
+        appendAuditLogs(savingCore, "SavingCore", DEPLOYMENT_BLOCKS.SavingCore, [
+          { name: "PlanCreated", category: "plans", action: "Plan created", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} created` },
+          { name: "PlanUpdated", category: "plans", action: "Plan updated", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} APR/status updated` },
+          { name: "Paused", category: "admin", action: "SavingCore paused", summarize: () => "SavingCore emergency pause enabled" },
+          { name: "Unpaused", category: "admin", action: "SavingCore unpaused", summarize: () => "SavingCore emergency pause disabled" },
+          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
+          { name: "DepositMarketplaceUpdated", category: "marketplace", action: "Marketplace updated", summarize: () => "Authorized deposit marketplace changed" },
+          { name: "DepositMarketplaceLocked", category: "marketplace", action: "Marketplace locked", summarize: () => "Authorized deposit marketplace permanently locked" },
+          { name: "MetadataImageURIUpdated", category: "admin", action: "Metadata image updated", summarize: () => "Deposit certificate metadata image URI updated" },
+          { name: "MetadataPermanentlyLocked", category: "admin", action: "Metadata locked", summarize: () => "Deposit certificate metadata permanently locked" },
+        ]),
+        appendAuditLogs(vaultManager, "VaultManager", DEPLOYMENT_BLOCKS.VaultManager, [
+          { name: "FeeReceiverUpdated", category: "vault", action: "Fee receiver updated", summarize: () => "Early-withdrawal fee receiver changed" },
+          { name: "VaultFunded", category: "vault", action: "Vault funded", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} added to interest vault` },
+          { name: "VaultWithdrawn", category: "vault", action: "Vault withdrawn", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} withdrawn from interest vault` },
+          { name: "SavingCoreUpdated", category: "admin", action: "SavingCore updated", summarize: () => "Authorized SavingCore changed" },
+          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
+          { name: "SavingCoreLocked", category: "admin", action: "SavingCore locked", summarize: () => "Authorized SavingCore permanently locked" },
+          { name: "Paused", category: "admin", action: "VaultManager paused", summarize: () => "VaultManager pause enabled" },
+          { name: "Unpaused", category: "admin", action: "VaultManager unpaused", summarize: () => "VaultManager pause disabled" },
+        ]),
+        appendAuditLogs(depositMarketplace, "DepositMarketplace", DEPLOYMENT_BLOCKS.DepositMarketplace, [
+          { name: "TermsHashUpdated", category: "marketplace", action: "Terms updated", summarize: () => "Marketplace terms hash changed" },
+          { name: "UnlistedDepositRecovered", category: "marketplace", action: "Deposit recovered", summarize: (args) => `Deposit #${args?.[0]?.toString() ?? "?"} recovered from marketplace` },
+          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
+          { name: "Paused", category: "admin", action: "Marketplace paused", summarize: () => "Marketplace pause enabled" },
+          { name: "Unpaused", category: "admin", action: "Marketplace unpaused", summarize: () => "Marketplace pause disabled" },
+        ]),
+      ]);
+
+      setAuditLogs(nextAuditLogs.sort((left, right) => right.blockNumber - left.blockNumber || right.logIndex - left.logIndex));
+    } catch (error) {
+      setErrorMessage(parseError(error));
+    }
+  }, [depositMarketplace, parseError, provider, savingCore, vaultManager]);
+
   const requestConfirmation = useCallback((nextConfirmation: ConfirmationState, action: () => void) => {
     confirmedActionRef.current = action;
     setConfirmation(nextConfirmation);
@@ -271,100 +345,38 @@ export default function AdminDashboard() {
       ]);
       const receiverBalance = (await mockUSDC.balanceOf(receiver)) as bigint;
 
-      const fetchedPlans: SavingPlan[] = [];
-      for (let planId = 0n; planId < nextPlanId; planId += 1n) {
-        fetchedPlans.push(normalizePlan(planId, await savingCore.savingPlans(planId)));
-      }
+      const fetchedPlans = await Promise.all(
+        Array.from({ length: Number(nextPlanId) }, async (_, planIndex) => {
+          const planId = BigInt(planIndex);
+          return normalizePlan(planId, await savingCore.savingPlans(planId));
+        })
+      );
 
       const nextDepositId = (await savingCore.nextDepositId()) as bigint;
-      const fetchedDeposits: AdminDepositInfo[] = [];
-      for (let depositId = 0n; depositId < nextDepositId; depositId += 1n) {
-        const deposit = normalizeDeposit(depositId, await savingCore.deposits(depositId));
+      const fetchedDeposits = await Promise.all(
+        Array.from({ length: Number(nextDepositId) }, async (_, depositIndex) => {
+          const depositId = BigInt(depositIndex);
+          const deposit = normalizeDeposit(depositId, await savingCore.deposits(depositId));
 
-        try {
-          deposit.owner = ethers.getAddress((await savingCore.ownerOf(depositId)) as string);
-        } catch {
-          deposit.owner = null;
-        }
-
-        try {
-          const [unpaidInterest, claimant] = await Promise.all([
-            savingCore.unpaidInterest(depositId) as Promise<bigint>,
-            savingCore.interestClaimant(depositId) as Promise<string>,
+          const [ownerResult, interestResult] = await Promise.allSettled([
+            savingCore.ownerOf(depositId) as Promise<string>,
+            Promise.all([
+              savingCore.unpaidInterest(depositId) as Promise<bigint>,
+              savingCore.interestClaimant(depositId) as Promise<string>,
+            ]),
           ]);
-          deposit.unpaidInterest = unpaidInterest;
-          deposit.interestClaimant = claimant === ethers.ZeroAddress ? null : ethers.getAddress(claimant);
-        } catch {
-          deposit.unpaidInterest = 0n;
-          deposit.interestClaimant = null;
-        }
 
-        fetchedDeposits.push(deposit);
-      }
+          deposit.owner = ownerResult.status === "fulfilled" ? ethers.getAddress(ownerResult.value) : null;
 
-      const nextAuditLogs: AuditLogEntry[] = [];
-      if (provider) {
-        const appendAuditLogs = async (
-          contract: ethers.Contract | null,
-          contractName: string,
-          startBlock: number,
-          events: { name: string; category: AuditLogEntry["category"]; action: string; summarize: (args: ethers.Result | null) => string }[],
-        ) => {
-          if (!contract) return;
-
-          for (const eventConfig of events) {
-            const filterFactory = (contract.filters as unknown as Record<string, (() => ethers.DeferredTopicFilter) | undefined>)[eventConfig.name];
-            if (!filterFactory) continue;
-
-            const eventsForType = await queryFilterInChunks(contract, filterFactory(), provider, startBlock);
-            for (const event of eventsForType) {
-              const transaction = await provider.getTransaction(event.transactionHash);
-              nextAuditLogs.push({
-                id: `${event.transactionHash}:${event.index}`,
-                category: eventConfig.category,
-                contractName,
-                action: eventConfig.action,
-                summary: eventConfig.summarize(readEventArgs(event)),
-                blockNumber: event.blockNumber,
-                transactionHash: event.transactionHash,
-                logIndex: event.index,
-                actor: transaction?.from ? ethers.getAddress(transaction.from) : null,
-              });
-            }
+          if (interestResult.status === "fulfilled") {
+            const [unpaidInterest, claimant] = interestResult.value;
+            deposit.unpaidInterest = unpaidInterest;
+            deposit.interestClaimant = claimant === ethers.ZeroAddress ? null : ethers.getAddress(claimant);
           }
-        };
 
-        await appendAuditLogs(savingCore, "SavingCore", DEPLOYMENT_BLOCKS.SavingCore, [
-          { name: "PlanCreated", category: "plans", action: "Plan created", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} created` },
-          { name: "PlanUpdated", category: "plans", action: "Plan updated", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} APR/status updated` },
-          { name: "Paused", category: "admin", action: "SavingCore paused", summarize: () => "SavingCore emergency pause enabled" },
-          { name: "Unpaused", category: "admin", action: "SavingCore unpaused", summarize: () => "SavingCore emergency pause disabled" },
-          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
-          { name: "DepositMarketplaceUpdated", category: "marketplace", action: "Marketplace updated", summarize: () => "Authorized deposit marketplace changed" },
-          { name: "DepositMarketplaceLocked", category: "marketplace", action: "Marketplace locked", summarize: () => "Authorized deposit marketplace permanently locked" },
-          { name: "MetadataImageURIUpdated", category: "admin", action: "Metadata image updated", summarize: () => "Deposit certificate metadata image URI updated" },
-          { name: "MetadataPermanentlyLocked", category: "admin", action: "Metadata locked", summarize: () => "Deposit certificate metadata permanently locked" },
-        ]);
-
-        await appendAuditLogs(vaultManager, "VaultManager", DEPLOYMENT_BLOCKS.VaultManager, [
-          { name: "FeeReceiverUpdated", category: "vault", action: "Fee receiver updated", summarize: () => "Early-withdrawal fee receiver changed" },
-          { name: "VaultFunded", category: "vault", action: "Vault funded", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} added to interest vault` },
-          { name: "VaultWithdrawn", category: "vault", action: "Vault withdrawn", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} withdrawn from interest vault` },
-          { name: "SavingCoreUpdated", category: "admin", action: "SavingCore updated", summarize: () => "Authorized SavingCore changed" },
-          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
-          { name: "SavingCoreLocked", category: "admin", action: "SavingCore locked", summarize: () => "Authorized SavingCore permanently locked" },
-          { name: "Paused", category: "admin", action: "VaultManager paused", summarize: () => "VaultManager pause enabled" },
-          { name: "Unpaused", category: "admin", action: "VaultManager unpaused", summarize: () => "VaultManager pause disabled" },
-        ]);
-
-        await appendAuditLogs(depositMarketplace, "DepositMarketplace", DEPLOYMENT_BLOCKS.DepositMarketplace, [
-          { name: "TermsHashUpdated", category: "marketplace", action: "Terms updated", summarize: () => "Marketplace terms hash changed" },
-          { name: "UnlistedDepositRecovered", category: "marketplace", action: "Deposit recovered", summarize: (args) => `Deposit #${args?.[0]?.toString() ?? "?"} recovered from marketplace` },
-          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
-          { name: "Paused", category: "admin", action: "Marketplace paused", summarize: () => "Marketplace pause enabled" },
-          { name: "Unpaused", category: "admin", action: "Marketplace unpaused", summarize: () => "Marketplace pause disabled" },
-        ]);
-      }
+          return deposit;
+        })
+      );
 
       setVaultBalance(vaultFund);
       setPrincipalLocked(principal);
@@ -376,13 +388,12 @@ export default function AdminDashboard() {
       setVaultManagerPaused(vaultPaused);
       setPlans(fetchedPlans);
       setAdminDeposits(fetchedDeposits.sort((left, right) => Number(right.id - left.id)));
-      setAuditLogs(nextAuditLogs.sort((left, right) => right.blockNumber - left.blockNumber || right.logIndex - left.logIndex));
     } catch (error) {
       setErrorMessage(parseError(error));
     } finally {
       setIsLoading(false);
     }
-  }, [depositMarketplace, mockUSDC, parseError, provider, savingCore, vaultManager]);
+  }, [mockUSDC, parseError, savingCore, vaultManager]);
 
   const runTransaction = useCallback(async (
     label: string,
@@ -611,7 +622,10 @@ export default function AdminDashboard() {
     if (!isAdmin) return;
 
     queueMicrotask(() => void refreshAdminData());
-  }, [isAdmin, refreshAdminData]);
+    const auditRefreshTimer = window.setTimeout(() => void refreshAuditLogs(), 500);
+
+    return () => window.clearTimeout(auditRefreshTimer);
+  }, [isAdmin, refreshAdminData, refreshAuditLogs]);
 
   if (isAdmin === null) {
     return (
@@ -653,7 +667,7 @@ export default function AdminDashboard() {
       {adminRole && adminRole !== "unauthorized" && (
         <p className="status-message">Connected role: {adminRole === "owner" ? "Deployer owner" : "Operational admin"}</p>
       )}
-      {isLoading && <UiStatePanel kind="loading" title="Loading admin data" message="Refreshing plans, vault balances, deposits, and audit logs from Sepolia." />}
+      {isLoading && <UiStatePanel kind="loading" title="Loading admin data" message="Refreshing plans, vault balances, and deposits from Sepolia." />}
 
       <section className="section-panel">
         <div className="section-header">
