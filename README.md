@@ -64,10 +64,10 @@ The frontend currently points to these Sepolia deployments:
 
 | Contract | Address |
 | --- | --- |
-| `MockUSDC` | `0x3Cb2AE0859d0B2aFe20d5f16Bf9e2E35A1cb2Cb8` |
-| `VaultManager` | `0x68749ba818599EB6eE66fEA1Aa526C60411C78aF` |
-| `SavingCore` | `0x4C1b681f4968A1524aac92c162B4422a2bf20110` |
-| `DepositMarketplace` | `0x5C6016D7155C99b4E3631e65cfffBA1de5c7604a` |
+| `MockUSDC` | `0x77bdef5D47F12eBC81509bf342333049523e5db4` |
+| `VaultManager` | `0x6240cb990896Cb0eBaD98c51EAbfAF1488198C15` |
+| `SavingCore` | `0xF49d95280B4758B0a5Fb84e29d0F75482dBdDeac` |
+| `DepositMarketplace` | `0xd3D67a08A646Df0A6B27350117d6A1bC9131e686` |
 
 Local deployments generate new addresses. Update `frontend/src/config.ts` if using a different deployment.
 
