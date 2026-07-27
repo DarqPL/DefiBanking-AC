@@ -78,6 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let renewed = 0;
   let failed = 0;
   let skippedOutOfRange = 0;
+  let skippedInterestUnavailable = 0;
   const planCache = new Map<string, { minDeposit: bigint; maxDeposit: bigint; enabled: boolean }>();
 
   async function getPlan(planId: bigint): Promise<{ minDeposit: bigint; maxDeposit: bigint; enabled: boolean }> {
@@ -132,6 +133,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
+    const settlementPreview = await savingCore.previewMaturitySettlement(depositId) as { canPayInterest: boolean };
+    if (interest !== 0n && !settlementPreview.canPayInterest) {
+      skippedInterestUnavailable += 1;
+      results.push({
+        depositId: depositId.toString(),
+        status: "skipped-interest-unavailable",
+        principal: principal.toString(),
+        interest: interest.toString(),
+      });
+      continue;
+    }
+
     eligible += 1;
 
     if (dryRun) {
@@ -162,6 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     renewed,
     failed,
     skippedOutOfRange,
+    skippedInterestUnavailable,
     results,
   });
 }

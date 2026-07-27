@@ -33,6 +33,7 @@ async function main() {
   let renewed = 0;
   let failed = 0;
   let skippedOutOfRange = 0;
+  let skippedInterestUnavailable = 0;
   const planCache = new Map<string, { minDeposit: bigint; maxDeposit: bigint; enabled: boolean }>();
 
   async function getPlan(planId: bigint): Promise<{ minDeposit: bigint; maxDeposit: bigint; enabled: boolean }> {
@@ -87,6 +88,15 @@ async function main() {
       continue;
     }
 
+    const settlementPreview = await savingCore.previewMaturitySettlement(depositId);
+    if (interest !== 0n && !settlementPreview.canPayInterest) {
+      skippedInterestUnavailable += 1;
+      console.log(
+        `Skipping deposit ${depositId.toString()}: vault cannot currently pay interest ${interest.toString()}`,
+      );
+      continue;
+    }
+
     eligible += 1;
 
     if (dryRun) {
@@ -112,6 +122,7 @@ async function main() {
   console.log(`Renewed deposits: ${renewed}`);
   console.log(`Failed renewals: ${failed}`);
   console.log(`Skipped out of range: ${skippedOutOfRange}`);
+  console.log(`Skipped interest unavailable: ${skippedInterestUnavailable}`);
 }
 
 main().catch((error) => {

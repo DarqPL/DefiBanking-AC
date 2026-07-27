@@ -111,6 +111,7 @@ For each request, the endpoint:
 - Skips deposits whose original plan is disabled, so the bot does not waste gas on renewals the contract will reject.
 - Reads `SavingCore.autoRenewGracePeriod()` and checks `block.timestamp >= maturityAt + autoRenewGracePeriod`.
 - Calculates `principal + interest` and skips deposits whose compounded principal is outside the original plan's min/max limits, so a permanent max-limit breach does not consume gas in later runs.
+- Calls `previewMaturitySettlement(depositId)` and skips deposits with `skipped-interest-unavailable` when the vault cannot currently pay the interest to compound, avoiding failed renewal gas where possible.
 - Calls `autoRenewDeposit(depositId)` for eligible deposits.
 - Continues scanning even if one renewal fails.
 - Returns a JSON summary with checked, eligible, renewed, and failed counts.
@@ -146,3 +147,9 @@ If the admin disables the original plan, both the bot and contract block auto-re
 Auto-renew compounds earned interest into the new principal. If the original plan has a maximum deposit and `principal + interest` exceeds that maximum, the contract rejects auto-renew with `NewPrincipalOutOfRange`.
 
 The bot pre-checks this deterministic condition before sending a transaction. Such deposits are returned as `skipped-new-principal-out-of-range` and remain active for the NFT owner to withdraw, manually renew into a suitable plan, or withdraw interest while continuing only the principal.
+
+## Vault Liquidity Rule
+
+Auto-renew must compound real interest into the new principal, so the vault must be able to pay the interest before renewal. The bot pre-checks this with `previewMaturitySettlement(depositId)`. If the vault cannot pay, the endpoint returns `skipped-interest-unavailable` instead of sending a transaction that would revert with `InterestUnavailable` and waste bot gas.
+
+This skip is not permanent. After the admin funds the vault, the next bot run scans the active deposit again and can renew it if the vault has enough liquidity.
