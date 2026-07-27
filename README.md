@@ -642,6 +642,43 @@ if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnav
 
 This prevents creating a new deposit with unpaid interest that `SavingCore` does not actually hold.
 
+### C2: Solvency Guard
+
+The problem with the base vault rule is that the admin can withdraw bank-funded vault liquidity even when that liquidity is already promised as interest to active deposits. A deposit that was payable before the admin withdrawal could become underfunded after it.
+
+The implemented solution is reserve accounting for promised interest. `SavingCore` calculates the expected interest when a deposit opens or renews, stores that amount per deposit, and tells `VaultManager` to add it to the global reserve:
+
+```solidity
+mapping(uint256 depositId => uint256 amount) public reservedInterestByDeposit;
+uint256 public reservedInterest;
+```
+
+`VaultManager.withdrawVault(amount)` only lets the owner or admin withdraw surplus liquidity above the reserved interest amount:
+
+```solidity
+function withdrawableVaultBalance() external view returns (uint256 balance) {
+    balance = _withdrawableVaultBalance(token.balanceOf(address(this)));
+}
+
+function _withdrawableVaultBalance(uint256 balance) private view returns (uint256) {
+    uint256 reserve = reservedInterest;
+    if (balance <= reserve) return 0;
+    return balance - reserve;
+}
+```
+
+The withdrawal itself reverts if the requested amount would reduce the vault below promised interest:
+
+```solidity
+if (_withdrawableVaultBalance(vaultToken.balanceOf(address(this))) < amount) revert InsufficientVaultBalance();
+```
+
+The reserve is released when the interest is no longer owed, such as early withdrawal or emergency principal withdrawal. It is consumed when interest is actually paid or compounded. If maturity withdrawal pays principal but defers interest because the vault is underfunded, the reserve stays attached to that deposit until the claimant successfully calls `claimInterest(depositId)`.
+
+The trade-off is extra accounting and more lifecycle updates. I accepted this because it gives a clear depositor protection: admin vault withdrawals can only take surplus liquidity, not liquidity already promised as active or deferred deposit interest.
+
+Test coverage: `test/VaultManager.test.ts` includes `prevents admin withdrawals of reserved interest while allowing surplus withdrawals` and reserve underflow/over-reserved balance checks. `test/SavingCore.test.ts` checks per-deposit reserve creation and release, including emergency principal withdrawal while paused.
+
 ### C5: Built-In Escrow Marketplace For Savings NFTs
 
 The extra problem I chose for C5 is that users may want to sell their savings positions before maturity. Because direct deposit NFT transfers would make the official marketplace irrelevant, `SavingCore` makes deposit NFTs soulbound except for transfers initiated by the authorized `DepositMarketplace`. A buyer needs to know the NFT is the real `SavingCore` certificate, that the deposit is still active, and that payment and NFT transfer happen safely.
