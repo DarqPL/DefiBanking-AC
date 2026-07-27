@@ -69,10 +69,14 @@ export function formatRemainingTime(now: bigint, target: bigint) {
 
   const remainingSeconds = target - now
   const days = remainingSeconds / 86_400n
-  const hours = (remainingSeconds % 86_400n) / 3_600n
+  const hours = remainingSeconds / 3_600n
+  const minutes = (remainingSeconds % 3_600n) / 60n
+  const seconds = remainingSeconds % 60n
 
-  if (days > 0n) return `${days.toString()}d ${hours.toString()}h remaining`
-  return `${hours.toString()}h remaining`
+  if (days > 0n) return `${days.toString()} ${days === 1n ? 'day' : 'days'} remaining`
+  if (hours > 0n) return `${hours.toString()}h ${minutes.toString()}m ${seconds.toString()}s remaining`
+  if (minutes > 0n) return `${minutes.toString()}m ${seconds.toString()}s remaining`
+  return `${seconds.toString()}s remaining`
 }
 
 export function getProgressPercent(startAt: bigint, maturityAt: bigint, now: bigint) {
@@ -80,7 +84,7 @@ export function getProgressPercent(startAt: bigint, maturityAt: bigint, now: big
   if (now <= startAt) return 0
   if (now >= maturityAt) return 100
 
-  return Number(((now - startAt) * 100n) / (maturityAt - startAt))
+  return Number(((now - startAt) * 10_000n) / (maturityAt - startAt)) / 100
 }
 
 export function statusToneForLabel(label: string) {

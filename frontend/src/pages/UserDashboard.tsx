@@ -287,6 +287,7 @@ function DepositCard({
   const canInterestOnlyRenew = deposit.canPayInterest && isAmountInPlanRange(selectedRenewPlan, deposit.principal);
   const statusLabel = isActive && isMatured ? "Matured" : DEPOSIT_STATUS[deposit.status.toString()] ?? "Unknown";
   const progress = getProgressPercent(deposit.startAt, deposit.maturityAt, now);
+  const progressLabel = Number.isInteger(progress) ? `${progress}%` : `${progress.toFixed(2)}%`;
 
   return (
     <article className="deposit-card">
@@ -294,12 +295,12 @@ function DepositCard({
         <h3>Deposit #{deposit.id.toString()}</h3>
         <StatusBadge tone={statusToneForLabel(statusLabel)}>{statusLabel}</StatusBadge>
       </div>
-      <div className="deposit-progress" aria-label={`Deposit maturity progress ${progress}%`}>
+      <div className="deposit-progress" aria-label={`Deposit maturity progress ${progressLabel}`}>
         <div className="deposit-progress-track">
           <div className="deposit-progress-fill" style={{ width: `${progress}%` }} />
         </div>
         <div className="deposit-progress-label">
-          <span>{progress}% complete</span>
+          <span>{progressLabel} complete</span>
           <span>{formatRemainingTime(now, deposit.maturityAt)}</span>
         </div>
       </div>
@@ -868,6 +869,22 @@ export default function UserDashboard() {
   useEffect(() => {
     queueMicrotask(() => void refreshDashboard());
   }, [refreshDashboard]);
+
+  useEffect(() => {
+    if (activeDeposits.length === 0) return undefined;
+
+    const updateNow = () => setNow(BigInt(Math.floor(Date.now() / 1000)));
+    const nearestMaturity = activeDeposits.reduce<bigint | null>((nearest, deposit) => {
+      if (nearest === null || deposit.maturityAt < nearest) return deposit.maturityAt;
+      return nearest;
+    }, null);
+    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const isNearestUnderOneHour = nearestMaturity !== null && nearestMaturity - nowSeconds < 3_600n;
+    const delayMs = isNearestUnderOneHour ? 1_000 : 5_000;
+
+    const timeoutId = window.setTimeout(updateNow, delayMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [activeDeposits, now]);
 
   return (
     <div className="dashboard-grid">
