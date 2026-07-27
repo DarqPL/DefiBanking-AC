@@ -22,6 +22,11 @@ Student ID ending used for this project: `71`.
 | Early withdrawal penalty | `300 + 7 * 50 = 650 bps = 6.5%` |
 | Default tenor | `180 days` because `B` is odd |
 
+## Demo Links
+
+- Demo video: [https://youtu.be/J8TgPVEwpYI](https://youtu.be/J8TgPVEwpYI)
+- Live web app: [https://defi-banking-ac.vercel.app/](https://defi-banking-ac.vercel.app/)
+
 ## Contracts
 
 ### `MockUSDC.sol`
