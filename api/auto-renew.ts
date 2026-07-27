@@ -1,4 +1,5 @@
 import { Contract, JsonRpcProvider, Wallet } from "ethers";
+import savingCoreAbi from "../data/abi/contracts/SavingCore.sol/SavingCore.json";
 import savingCoreDeployment from "../deployments/sepolia/SavingCore.json";
 
 const DEPOSIT_STATUS_ACTIVE = 1;
@@ -60,14 +61,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const provider = new JsonRpcProvider(process.env.SEPOLIA_RPC_URL || DEFAULT_SEPOLIA_RPC_URL);
   const wallet = new Wallet(botPrivateKey, provider);
-  const savingCore = new Contract(savingCoreDeployment.address, savingCoreDeployment.abi, wallet);
+  const savingCore = new Contract(savingCoreDeployment.address, savingCoreAbi, wallet);
   const latestBlock = await provider.getBlock("latest");
   if (!latestBlock) {
     return res.status(500).json({ error: "Unable to read latest block" });
   }
 
   const now = BigInt(latestBlock.timestamp);
-  const gracePeriod = await savingCore.AUTO_RENEW_GRACE_PERIOD();
+  const gracePeriod = await savingCore.autoRenewGracePeriod();
   const nextDepositId = await savingCore.nextDepositId();
   const dryRun = firstValue(req.query.dryRun) === "1";
 

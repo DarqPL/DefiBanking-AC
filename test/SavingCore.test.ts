@@ -9,13 +9,14 @@ describe("SavingCore", function () {
   const depositAmount = 1_000n * oneUsdc;
   const userFunds = 100_000n * oneUsdc;
   const vaultFunds = 100_000n * oneUsdc;
-  const tenorDays = 180n;
-  const tenorSeconds = tenorDays * 24n * 60n * 60n;
+  const day = 24n * 60n * 60n;
+  const tenorSeconds = 180n * day;
+  const demoTenorSeconds = 15n * 60n;
   const aprBps = 225n;
   const penaltyBps = 650n;
   const bpsDenominator = 10_000n;
   const yearSeconds = 365n * 24n * 60n * 60n;
-  const autoRenewGracePeriod = 3n * 24n * 60n * 60n;
+  const autoRenewGracePeriod = 3n * day;
 
   function getRevertData(error: unknown): string {
     const data = (error as { data?: string | { data?: string; reason?: { Revert?: string } } }).data;
@@ -78,7 +79,7 @@ describe("SavingCore", function () {
     await mockUSDC.mint(user.address, userFunds);
     await mockUSDC.approve(vaultAddress, vaultFunds);
     await vaultManager.fundVault(vaultFunds);
-    await savingCore.createPlan(tenorDays, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+    await savingCore.createPlan(tenorSeconds, aprBps, minDeposit, maxDeposit, penaltyBps, true);
 
     async function openDefaultDeposit(amount = depositAmount) {
       await mockUSDC.connect(user).approve(savingCoreAddress, amount);
@@ -106,7 +107,7 @@ describe("SavingCore", function () {
       const plan = await savingCore.savingPlans(0);
 
       expect(await savingCore.nextPlanId()).to.equal(1n);
-      expect(plan.tenorDays).to.equal(tenorDays);
+      expect(plan.tenorSeconds).to.equal(tenorSeconds);
       expect(plan.aprBps).to.equal(aprBps);
       expect(plan.minDeposit).to.equal(minDeposit);
       expect(plan.maxDeposit).to.equal(maxDeposit);
@@ -117,10 +118,10 @@ describe("SavingCore", function () {
     it("creates, updates, enables, and disables additional plans", async function () {
       const { savingCore } = await deploySavingCoreFixture();
 
-      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, false);
+      await savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, false);
       let plan = await savingCore.savingPlans(1);
       expect(await savingCore.nextPlanId()).to.equal(2n);
-      expect(plan.tenorDays).to.equal(365n);
+      expect(plan.tenorSeconds).to.equal(365n * day);
       expect(plan.aprBps).to.equal(400n);
       expect(plan.enabled).to.equal(false);
 
@@ -143,12 +144,46 @@ describe("SavingCore", function () {
       await savingCore.setAdmin(other.address);
       expect(await savingCore.admin()).to.equal(other.address);
 
-      await savingCore.connect(other).createPlan(365, 400, minDeposit, maxDeposit, 300, true);
+      await savingCore.connect(other).createPlan(365n * day, 400, minDeposit, maxDeposit, 300, true);
       await savingCore.connect(other).pause();
       expect(await savingCore.paused()).to.equal(true);
       await savingCore.connect(other).unpause();
 
       await expectCustomError(savingCore.connect(other).setAdmin.staticCall(other.address), savingCore.interface, "OwnableUnauthorizedAccount");
+    });
+
+    it("supports minute-length demo plans with second-based tenor storage", async function () {
+      const { user, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
+
+      await savingCore.createPlan(demoTenorSeconds, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      const plan = await savingCore.savingPlans(1);
+      expect(plan.tenorSeconds).to.equal(demoTenorSeconds);
+
+      await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount);
+      await savingCore.connect(user).openDeposit(1, depositAmount);
+      const deposit = await savingCore.deposits(0);
+      expect(deposit.maturityAt - deposit.startAt).to.equal(demoTenorSeconds);
+    });
+
+    it("lets owner or admin configure auto-renew grace while rejecting invalid callers and zero", async function () {
+      const { other, bot, savingCore } = await deploySavingCoreFixture();
+      const demoGrace = 15n * 60n;
+
+      expect(await savingCore.autoRenewGracePeriod()).to.equal(autoRenewGracePeriod);
+      await expectCustomError(savingCore.setAutoRenewGracePeriod.staticCall(0), savingCore.interface, "InvalidGracePeriod");
+      await expectCustomError(
+        savingCore.connect(other).setAutoRenewGracePeriod.staticCall(demoGrace),
+        savingCore.interface,
+        "UnauthorizedAdmin",
+      );
+
+      await savingCore.setAutoRenewGracePeriod(demoGrace);
+      expect(await savingCore.autoRenewGracePeriod()).to.equal(demoGrace);
+
+      await savingCore.setAdmin(other.address);
+      await savingCore.connect(other).setAutoRenewGracePeriod(30n * 60n);
+      expect(await savingCore.autoRenewGracePeriod()).to.equal(30n * 60n);
+      await expectCustomError(savingCore.connect(bot).setAutoRenewGracePeriod.staticCall(demoGrace), savingCore.interface, "UnauthorizedAdmin");
     });
 
     it("locks the authorized marketplace against later owner or admin changes", async function () {
@@ -171,11 +206,11 @@ describe("SavingCore", function () {
       const { other, savingCore } = await deploySavingCoreFixture();
 
       await expectCustomError(savingCore.createPlan.staticCall(0, aprBps, minDeposit, maxDeposit, penaltyBps, true), savingCore.interface, "InvalidTenor");
-      await expectCustomError(savingCore.createPlan.staticCall(tenorDays, 10_001, minDeposit, maxDeposit, penaltyBps, true), savingCore.interface, "InvalidApr");
-      await expectCustomError(savingCore.createPlan.staticCall(tenorDays, aprBps, minDeposit, maxDeposit, 10_001, true), savingCore.interface, "InvalidPenalty");
-      await expectCustomError(savingCore.createPlan.staticCall(tenorDays, aprBps, maxDeposit, minDeposit, penaltyBps, true), savingCore.interface, "InvalidPlanRange");
+      await expectCustomError(savingCore.createPlan.staticCall(tenorSeconds, 10_001, minDeposit, maxDeposit, penaltyBps, true), savingCore.interface, "InvalidApr");
+      await expectCustomError(savingCore.createPlan.staticCall(tenorSeconds, aprBps, minDeposit, maxDeposit, 10_001, true), savingCore.interface, "InvalidPenalty");
+      await expectCustomError(savingCore.createPlan.staticCall(tenorSeconds, aprBps, maxDeposit, minDeposit, penaltyBps, true), savingCore.interface, "InvalidPlanRange");
       await expectCustomError(
-        savingCore.connect(other).createPlan.staticCall(tenorDays, aprBps, minDeposit, maxDeposit, penaltyBps, true),
+        savingCore.connect(other).createPlan.staticCall(tenorSeconds, aprBps, minDeposit, maxDeposit, penaltyBps, true),
         savingCore.interface,
         "UnauthorizedAdmin",
       );
@@ -275,7 +310,7 @@ describe("SavingCore", function () {
       }
 
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, 20_000n * oneUsdc, 300, true);
       await time.increase(Number(tenorSeconds));
       await savingCore.connect(user).renewDeposit(6, 1);
       expect((await decodedMetadata(savingCore, 6)).attributes).to.deep.include({ trait_type: "Status", value: "Manual Renewed" });
@@ -291,9 +326,9 @@ describe("SavingCore", function () {
     it("allows zero min or max deposit limits to mean no limit", async function () {
       const { user, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
 
-      await savingCore.createPlan(tenorDays, aprBps, 0, 0, penaltyBps, true);
-      await savingCore.createPlan(tenorDays, aprBps, 0, depositAmount, penaltyBps, true);
-      await savingCore.createPlan(tenorDays, aprBps, depositAmount, 0, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, aprBps, 0, 0, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, aprBps, 0, depositAmount, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, aprBps, depositAmount, 0, penaltyBps, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount * 3n);
 
       await savingCore.connect(user).openDeposit(1, depositAmount);
@@ -380,7 +415,7 @@ describe("SavingCore", function () {
 
     it("handles zero-interest maturity withdrawal and rejects non-owner or non-existent withdrawals", async function () {
       const { user, other, mockUSDC, vaultAddress, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
-      await savingCore.createPlan(tenorDays, 0, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, 0, minDeposit, maxDeposit, penaltyBps, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount);
       await savingCore.connect(user).openDeposit(1, depositAmount);
 
@@ -572,8 +607,8 @@ describe("SavingCore", function () {
 
     it("covers zero-penalty and full-penalty early withdrawal branches", async function () {
       const { feeReceiver, user, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
-      await savingCore.createPlan(tenorDays, aprBps, minDeposit, maxDeposit, 0, true);
-      await savingCore.createPlan(tenorDays, aprBps, minDeposit, maxDeposit, 10_000, true);
+      await savingCore.createPlan(tenorSeconds, aprBps, minDeposit, maxDeposit, 0, true);
+      await savingCore.createPlan(tenorSeconds, aprBps, minDeposit, maxDeposit, 10_000, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount * 2n);
 
       await savingCore.connect(user).openDeposit(1, depositAmount);
@@ -621,7 +656,7 @@ describe("SavingCore", function () {
     it("manually renews a matured deposit into a new plan and compounds exact interest", async function () {
       const { user, mockUSDC, vaultAddress, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, 20_000n * oneUsdc, 300, true);
 
       const oldDeposit = await savingCore.deposits(0);
       await time.increase(Number(tenorSeconds));
@@ -639,7 +674,7 @@ describe("SavingCore", function () {
       expect(await savingCore.ownerOf(1)).to.equal(user.address);
       expect(newDeposit.planId).to.equal(1n);
       expect(newDeposit.principal).to.equal(depositAmount + interest);
-      expect(newDeposit.maturityAt - newDeposit.startAt).to.equal(365n * 24n * 60n * 60n);
+      expect(newDeposit.maturityAt - newDeposit.startAt).to.equal(365n * day);
       expect(newDeposit.aprBpsAtOpen).to.equal(400n);
       expect(newDeposit.penaltyBpsAtOpen).to.equal(300n);
       expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore);
@@ -650,19 +685,19 @@ describe("SavingCore", function () {
     it("rejects invalid manual renewals", async function () {
       const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, true);
 
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "NotMatured");
       await time.increase(Number(tenorSeconds));
       await expectCustomError(savingCore.connect(other).renewDeposit.staticCall(0, 1), savingCore.interface, "NotDepositOwner");
 
-      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, false);
+      await savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, false);
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 2), savingCore.interface, "PlanNotEnabled");
 
-      await savingCore.createPlan(365, 400, minDeposit, depositAmount, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, depositAmount, 300, true);
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 3), savingCore.interface, "NewPrincipalOutOfRange");
 
-      await savingCore.createPlan(365, 400, depositAmount * 2n, maxDeposit, 300, true);
+      await savingCore.createPlan(365n * day, 400, depositAmount * 2n, maxDeposit, 300, true);
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 4), savingCore.interface, "NewPrincipalOutOfRange");
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(99, 1), savingCore.interface, "DepositNotFound");
     });
@@ -670,7 +705,7 @@ describe("SavingCore", function () {
     it("keeps manual renewal rights with the original owner when direct transfer is rejected", async function () {
       const { user, other, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, 20_000n * oneUsdc, 300, true);
       await expectCustomError(
         savingCore.connect(user).transferFrom.staticCall(user.address, other.address, 0),
         savingCore.interface,
@@ -690,7 +725,7 @@ describe("SavingCore", function () {
       const { user, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await vaultManager.withdrawVault(vaultFunds);
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, 20_000n * oneUsdc, 300, true);
       await time.increase(Number(tenorSeconds));
 
       await expectCustomError(savingCore.connect(user).renewDeposit.staticCall(0, 1), savingCore.interface, "InterestUnavailable");
@@ -702,7 +737,7 @@ describe("SavingCore", function () {
       const smallDeposit = minDeposit;
       const smallInterest = calculateInterest(smallDeposit, aprBps, tenorSeconds);
       await vaultManager.withdrawVault(vaultFunds - smallInterest);
-      await savingCore.createPlan(365, 400, minDeposit, 20_000n * oneUsdc, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, 20_000n * oneUsdc, 300, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount + smallDeposit);
       await savingCore.connect(user).openDeposit(0, depositAmount);
       await savingCore.connect(user).openDeposit(0, smallDeposit);
@@ -754,6 +789,23 @@ describe("SavingCore", function () {
       expect(await mockUSDC.balanceOf(vaultAddress)).to.equal(vaultBefore - interest);
     });
 
+    it("auto-renews after a configured 15-minute demo grace period", async function () {
+      const { bot, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
+      const demoGrace = 15n * 60n;
+      await savingCore.setAutoRenewGracePeriod(demoGrace);
+      await openDefaultDeposit();
+
+      const oldDeposit = await savingCore.deposits(0);
+      await time.increaseTo(Number(oldDeposit.maturityAt + demoGrace - 1n));
+      await expectCustomError(savingCore.connect(bot).autoRenewDeposit.staticCall(0), savingCore.interface, "GracePeriodNotEnded");
+
+      await time.increase(1);
+      await savingCore.connect(bot).autoRenewDeposit(0);
+
+      expect((await savingCore.deposits(0)).status).to.equal(5n);
+      expect((await savingCore.deposits(1)).status).to.equal(1n);
+    });
+
     it("blocks auto-renewal for a deposit when the vault cannot pay the interest to compound", async function () {
       const { bot, vaultManager, savingCore, openDefaultDeposit } = await deploySavingCoreFixture();
       await vaultManager.withdrawVault(vaultFunds);
@@ -766,7 +818,7 @@ describe("SavingCore", function () {
 
     it("blocks auto-renewal when compounded principal exceeds the original plan maximum", async function () {
       const { user, bot, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
-      await savingCore.createPlan(tenorDays, aprBps, minDeposit, depositAmount, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, aprBps, minDeposit, depositAmount, penaltyBps, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount);
       await savingCore.connect(user).openDeposit(1, depositAmount);
       await time.increase(Number(tenorSeconds + autoRenewGracePeriod));
@@ -793,8 +845,8 @@ describe("SavingCore", function () {
 
     it("handles zero-interest manual and auto renewals without touching the vault", async function () {
       const { user, bot, mockUSDC, vaultAddress, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
-      await savingCore.createPlan(tenorDays, 0, minDeposit, maxDeposit, penaltyBps, true);
-      await savingCore.createPlan(365, 0, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, 0, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(365n * day, 0, minDeposit, maxDeposit, penaltyBps, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount * 2n);
 
       await savingCore.connect(user).openDeposit(1, depositAmount);
@@ -819,7 +871,7 @@ describe("SavingCore", function () {
     it("withdraws interest and renews only principal when compounding would exceed the plan maximum", async function () {
       const { user, mockUSDC, vaultAddress, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, depositAmount, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, depositAmount, 300, true);
       const oldDeposit = await savingCore.deposits(0);
       const interest = calculateInterest(oldDeposit.principal, oldDeposit.aprBpsAtOpen, oldDeposit.maturityAt - oldDeposit.startAt);
       await time.increase(Number(tenorSeconds));
@@ -840,7 +892,7 @@ describe("SavingCore", function () {
       expect(await savingCore.ownerOf(1)).to.equal(user.address);
       expect(newDeposit.planId).to.equal(1n);
       expect(newDeposit.principal).to.equal(depositAmount);
-      expect(newDeposit.maturityAt - newDeposit.startAt).to.equal(365n * 24n * 60n * 60n);
+      expect(newDeposit.maturityAt - newDeposit.startAt).to.equal(365n * day);
       expect(newDeposit.aprBpsAtOpen).to.equal(400n);
       expect(newDeposit.penaltyBpsAtOpen).to.equal(300n);
       expect(await mockUSDC.balanceOf(user.address)).to.equal(userBefore + interest);
@@ -851,7 +903,7 @@ describe("SavingCore", function () {
     it("rejects interest-only renewal when vault liquidity or target plan rules do not allow it", async function () {
       const { user, other, mockUSDC, savingCore, savingCoreAddress, openDefaultDeposit } = await deploySavingCoreFixture();
       await openDefaultDeposit();
-      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, true);
       await expectCustomError(
         savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 1),
         savingCore.interface,
@@ -865,14 +917,14 @@ describe("SavingCore", function () {
         "NotDepositOwner",
       );
 
-      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, false);
+      await savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, false);
       await expectCustomError(
         savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 2),
         savingCore.interface,
         "PlanNotEnabled",
       );
 
-      await savingCore.createPlan(365, 400, depositAmount * 2n, maxDeposit, 300, true);
+      await savingCore.createPlan(365n * day, 400, depositAmount * 2n, maxDeposit, 300, true);
       await expectCustomError(
         savingCore.connect(user).withdrawInterestAndRenewPrincipal.staticCall(0, 3),
         savingCore.interface,
@@ -882,7 +934,7 @@ describe("SavingCore", function () {
       const underfunded = await deploySavingCoreFixture();
       await underfunded.vaultManager.withdrawVault(vaultFunds);
       await underfunded.openDefaultDeposit();
-      await underfunded.savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, true);
+      await underfunded.savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, true);
       await time.increase(Number(tenorSeconds));
       await expectCustomError(
         underfunded.savingCore.connect(underfunded.user).withdrawInterestAndRenewPrincipal.staticCall(0, 1),
@@ -896,7 +948,7 @@ describe("SavingCore", function () {
         "DepositNotFound",
       );
 
-      await savingCore.createPlan(tenorDays, 0, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(tenorSeconds, 0, minDeposit, maxDeposit, penaltyBps, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount);
       await savingCore.connect(user).openDeposit(4, depositAmount);
       await time.increase(Number(tenorSeconds));
@@ -908,7 +960,7 @@ describe("SavingCore", function () {
   describe("Pausable Security", function () {
     it("blocks openDeposit, withdrawAtMaturity, renewDeposit, and autoRenewDeposit when paused", async function () {
       const { user, bot, mockUSDC, savingCore, savingCoreAddress } = await deploySavingCoreFixture();
-      await savingCore.createPlan(365, 400, minDeposit, maxDeposit, 300, true);
+      await savingCore.createPlan(365n * day, 400, minDeposit, maxDeposit, 300, true);
       await mockUSDC.connect(user).approve(savingCoreAddress, depositAmount * 3n);
 
       await savingCore.pause();

@@ -43,6 +43,7 @@ Student ID ending used for this project: `71`.
 - Creates, updates, enables, and disables saving plans.
 - Opens deposits and mints ERC721 certificate NFTs.
 - Serves dynamic on-chain JSON metadata through `tokenURI(depositId)` so wallets can show a certificate name, image, and live deposit attributes.
+- Stores saving plan tenors in seconds. The default plan is still `180 days`, while demo plans can use minute-length tenors.
 - Stores APR and penalty snapshots per deposit.
 - Handles maturity withdrawal, early withdrawal, manual renewal, and auto-renewal.
 - Holds user principal separately from the vault interest pool.
@@ -134,7 +135,7 @@ At or after maturity, the NFT owner can call `withdrawInterestAndRenewPrincipal(
 
 ### Auto-Renewal
 
-After `maturityAt + 3 days`, anyone can call `autoRenewDeposit(depositId)`.
+After `maturityAt + autoRenewGracePeriod`, anyone can call `autoRenewDeposit(depositId)`. The default grace is the assignment value `3 days`; owner/admin can configure it for demos, such as `15 minutes`.
 
 - Old deposit status becomes `AutoRenewed`.
 - Interest is pulled from `VaultManager` into `SavingCore`.
@@ -165,7 +166,7 @@ Buyer flow:
 
 Direct wallet-to-wallet NFT transfers, including MetaMask "Send NFT", are rejected by `SavingCore` and do not change deposit ownership.
 
-Listings too close to maturity are blocked by the marketplace no-listing window. Existing listings that later enter the restricted window can be cleaned up by calling `cleanListings(uint256[] depositIds)`, returning NFTs to sellers. The older `cleanExpiredListings(uint256 maxListings)` cursor cleanup remains available as a permissionless fallback.
+Listings too close to maturity are blocked by the marketplace no-listing window. Existing listings that later enter the restricted window can be cleaned up by calling `cleanListings(uint256[] depositIds)`, returning NFTs to sellers. The older `cleanExpiredListings(uint256 maxListings)` cursor cleanup remains available as a permissionless fallback. Very short demo tenors can be restricted from listing immediately because the existing no-listing window is longer than the full demo term.
 
 ## Admin Flows
 
@@ -177,6 +178,7 @@ The owner/admin can:
 - Fund the vault.
 - Withdraw vault liquidity.
 - Set the early-withdrawal fee receiver.
+- Set the auto-renew grace period.
 - Pause and unpause `SavingCore`.
 - Pause and unpause `VaultManager`.
 
@@ -282,6 +284,7 @@ Required or supported environment variables are documented in `.env_example`:
 - `REPORT_GAS` for gas reporting.
 - `BOT_PRIVATE_KEY` for the auto-renew bot wallet.
 - `CRON_SECRET` for the protected bot API endpoints.
+- Optional `AUTO_RENEW_GRACE_SECONDS` for deployment-time demo grace configuration.
 - Optional `SEPOLIA_RPC_URL` and `MAINNET_RPC_URL` overrides.
 
 Do not commit real `.env` files or private keys.
@@ -341,7 +344,7 @@ This project includes:
 
 The marketplace cleanup endpoint is `api/marketplace-cleanup.ts`. It reads the marketplace address from `deployments/sepolia/DepositMarketplace.json`, scans all current listing IDs off-chain with `isListingStale(depositId)`, and only sends a transaction when stale listings exist. If no stale listing exists, it returns `mode: "skip"`. If stale listings exist, it calls `DepositMarketplace.cleanListings(staleDepositIds)` from a bot wallet. It is intended to be triggered by cron-job.org or another scheduler.
 
-The Vercel endpoint should be called periodically with a `CRON_SECRET`. It scans active deposits, skips deposits whose original plan is disabled, and calls `autoRenewDeposit` for enabled-plan deposits that reached `maturityAt + 3 days`.
+The Vercel endpoint should be called periodically with a `CRON_SECRET`. It scans active deposits, skips deposits whose original plan is disabled, reads `SavingCore.autoRenewGracePeriod()`, and calls `autoRenewDeposit` for enabled-plan deposits that reached `maturityAt + autoRenewGracePeriod`. For demos, set the contract grace to `15 minutes` and run the scheduler every 15 minutes.
 
 Local dry-run or bot command:
 
@@ -354,7 +357,7 @@ npm run bot:auto-renew:sepolia
 Latest recorded contract verification:
 
 - `npm.cmd run compile`: passed.
-- `npm.cmd test`: passed with `74 passing`.
+- `npm.cmd test`: passed with `97 passing`.
 - `npx.cmd hardhat coverage`: passed.
 - Coverage: `100%` statements, `95.45%` branches, `100%` functions, `100%` lines.
 
@@ -463,7 +466,7 @@ function autoRenewDeposit(uint256 depositId) external whenNotPaused {
 The function only checks that the grace period has ended and that the original plan is still enabled:
 
 ```solidity
-uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+uint256 renewAfter = uint256(oldDeposit.maturityAt) + autoRenewGracePeriod;
 if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 
 SavingPlan storage originalPlan = _getExistingPlan(oldDeposit.planId);
@@ -477,7 +480,7 @@ if (ownerOf(depositId) != account) revert NotDepositOwner();
 if (block.timestamp < deposit.maturityAt) revert NotMatured();
 ```
 
-Test coverage: `test/SavingCore.test.ts` includes `auto-renews permissionlessly after the 3-day grace period and preserves original economics`.
+Test coverage: `test/SavingCore.test.ts` includes `auto-renews permissionlessly after the 3-day grace period and preserves original economics` and `auto-renews after a configured 15-minute demo grace period`.
 
 ### 4. Rounding Dust
 
@@ -508,10 +511,10 @@ Manual renewal is also allowed at the exact maturity timestamp because it reject
 if (block.timestamp < oldDeposit.maturityAt) revert NotMatured();
 ```
 
-Auto-renew is allowed at the exact end of the grace period. `autoRenewDeposit` rejects only when `block.timestamp < maturityAt + AUTO_RENEW_GRACE_PERIOD`, so `maturityAt + 3 days` is valid. At that exact point, manual renewal and auto-renewal can both be valid; whichever transaction is mined first changes the deposit status and prevents the other action from reusing the same deposit.
+Auto-renew is allowed at the exact end of the grace period. `autoRenewDeposit` rejects only when `block.timestamp < maturityAt + autoRenewGracePeriod`, so `maturityAt + 3 days` is valid by default and `maturityAt + 15 minutes` is valid after demo configuration. At that exact point, manual renewal and auto-renewal can both be valid; whichever transaction is mined first changes the deposit status and prevents the other action from reusing the same deposit.
 
 ```solidity
-uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+uint256 renewAfter = uint256(oldDeposit.maturityAt) + autoRenewGracePeriod;
 if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 ```
 

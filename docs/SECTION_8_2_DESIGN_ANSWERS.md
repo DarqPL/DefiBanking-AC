@@ -96,7 +96,7 @@ function autoRenewDeposit(uint256 depositId) external whenNotPaused {
 The function only checks that the grace period has ended and that the original plan is still enabled:
 
 ```solidity
-uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+uint256 renewAfter = uint256(oldDeposit.maturityAt) + autoRenewGracePeriod;
 if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 
 SavingPlan storage originalPlan = _getExistingPlan(oldDeposit.planId);
@@ -110,7 +110,7 @@ if (ownerOf(depositId) != account) revert NotDepositOwner();
 if (block.timestamp < deposit.maturityAt) revert NotMatured();
 ```
 
-Test coverage: `test/SavingCore.test.ts` includes `auto-renews permissionlessly after the 3-day grace period and preserves original economics`.
+Test coverage: `test/SavingCore.test.ts` includes `auto-renews permissionlessly after the 3-day grace period and preserves original economics` and `auto-renews after a configured 15-minute demo grace period`.
 
 ### 4. Rounding Dust
 
@@ -141,10 +141,10 @@ Manual renewal is also allowed at the exact maturity timestamp because it reject
 if (block.timestamp < oldDeposit.maturityAt) revert NotMatured();
 ```
 
-Auto-renew is allowed at the exact end of the grace period. `autoRenewDeposit` rejects only when `block.timestamp < maturityAt + AUTO_RENEW_GRACE_PERIOD`, so `maturityAt + 3 days` is valid. At that exact point, manual renewal and auto-renewal can both be valid; whichever transaction is mined first changes the deposit status and prevents the other action from reusing the same deposit.
+Auto-renew is allowed at the exact end of the grace period. `autoRenewDeposit` rejects only when `block.timestamp < maturityAt + autoRenewGracePeriod`, so `maturityAt + 3 days` is valid by default and shorter demo grace periods such as `15 minutes` are valid after owner/admin configuration. At that exact point, manual renewal and auto-renewal can both be valid; whichever transaction is mined first changes the deposit status and prevents the other action from reusing the same deposit.
 
 ```solidity
-uint256 renewAfter = uint256(oldDeposit.maturityAt) + AUTO_RENEW_GRACE_PERIOD;
+uint256 renewAfter = uint256(oldDeposit.maturityAt) + autoRenewGracePeriod;
 if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 ```
 

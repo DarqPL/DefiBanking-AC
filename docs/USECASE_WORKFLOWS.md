@@ -321,7 +321,7 @@ flowchart TD
 Auto-renew rules:
 
 - Auto-renew is permissionless; any account or bot can call it after the grace period.
-- The current grace period is `3 days` for student variant ending `71`.
+- The default grace period is `3 days` for student variant ending `71`, and owner/admin can configure it for demos such as `15 minutes`.
 - Auto-renew preserves the old deposit's APR and penalty snapshots while the original plan remains enabled.
 - Auto-renew is rejected if compounding would put the new principal outside the original plan's min/max limits.
 - If the bot is offline, the deposit remains active and the user can still withdraw or manually renew.
@@ -440,11 +440,11 @@ Stale listing conditions:
 No-listing window formula:
 
 ```text
-D = min(max(10, floor(tenorDays * 5 / 100)), 30)
-blocked when block.timestamp >= maturityAt - D days
+D = min(max(10 days, floor(tenorSeconds * 5 / 100)), 30 days)
+blocked when block.timestamp >= maturityAt - D
 ```
 
-For the default `180 days` plan, the restricted window is the final `10 days`.
+For the default `180 days` plan, the restricted window is the final `10 days`. For very short demo plans, the restricted window can be longer than the whole tenor, so listing is blocked immediately instead of underflowing the timestamp calculation.
 
 ## Pause And Emergency Controls
 

@@ -25,7 +25,7 @@ async function main() {
   if (!latestBlock) throw new Error("Unable to read latest block");
 
   const now = BigInt(latestBlock.timestamp);
-  const gracePeriod = await savingCore.AUTO_RENEW_GRACE_PERIOD();
+  const gracePeriod = await savingCore.autoRenewGracePeriod();
   const nextDepositId = await savingCore.nextDepositId();
 
   let checked = 0;

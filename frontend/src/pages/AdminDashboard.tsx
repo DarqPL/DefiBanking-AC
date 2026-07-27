@@ -12,6 +12,7 @@ import {
   formatBps,
   formatDate,
   formatDepositLimit,
+  formatDuration,
   formatUsdc,
   isSameAddress,
   statusToneForLabel,
@@ -21,14 +22,17 @@ type SavingPlan = {
   id: bigint;
   minDeposit: bigint;
   maxDeposit: bigint;
-  tenorDays: bigint;
+  tenorSeconds: bigint;
   aprBps: bigint;
   earlyWithdrawPenaltyBps: bigint;
   enabled: boolean;
 };
 
+type DurationUnit = "minutes" | "hours" | "days";
+
 type CreatePlanForm = {
-  tenorDays: string;
+  tenorValue: string;
+  tenorUnit: DurationUnit;
   aprPercent: string;
   minDeposit: string;
   maxDeposit: string;
@@ -75,7 +79,8 @@ type ConfirmationState = {
 };
 
 const defaultCreatePlanForm: CreatePlanForm = {
-  tenorDays: "180",
+  tenorValue: "180",
+  tenorUnit: "days",
   aprPercent: "2.25",
   minDeposit: "1",
   maxDeposit: "10000",
@@ -122,6 +127,13 @@ function percentToBps(value: string) {
   return Math.round(Number(value || "0") * 100);
 }
 
+function durationToSeconds(value: string, unit: DurationUnit) {
+  const amount = BigInt(value || "0");
+  if (unit === "minutes") return amount * 60n;
+  if (unit === "hours") return amount * 60n * 60n;
+  return amount * 24n * 60n * 60n;
+}
+
 function formatAddress(address: string | null) {
   if (!address) return "Closed / burned";
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -141,7 +153,7 @@ function normalizePlan(id: bigint, plan: unknown): SavingPlan {
   const values = plan as {
     minDeposit: bigint;
     maxDeposit: bigint;
-    tenorDays: bigint;
+    tenorSeconds: bigint;
     aprBps: bigint;
     earlyWithdrawPenaltyBps: bigint;
     enabled: boolean;
@@ -151,7 +163,7 @@ function normalizePlan(id: bigint, plan: unknown): SavingPlan {
     id,
     minDeposit: values.minDeposit,
     maxDeposit: values.maxDeposit,
-    tenorDays: values.tenorDays,
+    tenorSeconds: values.tenorSeconds,
     aprBps: values.aprBps,
     earlyWithdrawPenaltyBps: values.earlyWithdrawPenaltyBps,
     enabled: values.enabled,
@@ -177,6 +189,9 @@ export default function AdminDashboard() {
   const [feeReceiverBalance, setFeeReceiverBalance] = useState<bigint>(0n);
   const [savingCorePaused, setSavingCorePaused] = useState(false);
   const [vaultManagerPaused, setVaultManagerPaused] = useState(false);
+  const [autoRenewGracePeriod, setAutoRenewGracePeriod] = useState<bigint>(0n);
+  const [graceValue, setGraceValue] = useState("3");
+  const [graceUnit, setGraceUnit] = useState<DurationUnit>("days");
   const [fundAmount, setFundAmount] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [createPlanForm, setCreatePlanForm] = useState<CreatePlanForm>(defaultCreatePlanForm);
@@ -201,7 +216,8 @@ export default function AdminDashboard() {
       if (depositFilter === "manual") return deposit.status === 4n;
       if (depositFilter === "auto") return deposit.status === 5n;
       if (depositFilter === "deferred") return deposit.unpaidInterest > 0n;
-      if (depositFilter === "escrowed") return deposit.status === 1n && isSameAddress(deposit.owner, CONTRACT_ADDRESSES.DepositMarketplace);
+      if (depositFilter === "escrowed")
+        return deposit.status === 1n && isSameAddress(deposit.owner, CONTRACT_ADDRESSES.DepositMarketplace);
       return true;
     });
   }, [adminDeposits, depositFilter]);
@@ -211,25 +227,29 @@ export default function AdminDashboard() {
   }, [auditFilter, auditLogs]);
   const auditPagination = paginate(filteredAuditLogs, auditPage);
   const hasVaultShortfall = reservedInterest > vaultBalance;
-  const vaultPaymentStatusLabel = reservedInterest === 0n ? "No Interest Due" : hasVaultShortfall ? "Not Enough To Pay" : "Enough To Pay";
+  const vaultPaymentStatusLabel =
+    reservedInterest === 0n ? "No Interest Due" : hasVaultShortfall ? "Not Enough To Pay" : "Enough To Pay";
   const feeReceiverDisabledReason = !newFeeReceiver
     ? "Enter a new fee receiver address."
     : !ethers.isAddress(newFeeReceiver)
-      ? "Enter a valid Ethereum address."
-      : feeReceiver && isSameAddress(newFeeReceiver, feeReceiver)
-        ? "This is already the active fee receiver."
-        : isBusy
-          ? "Wait for the current admin action to finish."
-          : null;
+    ? "Enter a valid Ethereum address."
+    : feeReceiver && isSameAddress(newFeeReceiver, feeReceiver)
+    ? "This is already the active fee receiver."
+    : isBusy
+    ? "Wait for the current admin action to finish."
+    : null;
   const toastItems: ToastItem[] = [
     ...(txStatus ? [{ id: `status:${txStatus}`, message: txStatus, tone: "status" as const }] : []),
     ...(alertMessage ? [{ id: `success:${alertMessage}`, message: alertMessage, tone: "success" as const }] : []),
     ...(errorMessage ? [{ id: `error:${errorMessage}`, message: errorMessage, tone: "error" as const }] : []),
   ].filter((item) => !dismissedToastIds.has(item.id));
 
-  const parseError = useCallback((error: unknown) => {
-    return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
-  }, [mockUSDC, savingCore, vaultManager]);
+  const parseError = useCallback(
+    (error: unknown) => {
+      return parseTransactionError(error, savingCore, vaultManager, mockUSDC);
+    },
+    [mockUSDC, savingCore, vaultManager]
+  );
 
   const refreshAuditLogs = useCallback(async () => {
     if (!provider) return;
@@ -240,17 +260,26 @@ export default function AdminDashboard() {
       contract: ethers.Contract | null,
       contractName: string,
       startBlock: number,
-      events: { name: string; category: AuditLogEntry["category"]; action: string; summarize: (args: ethers.Result | null) => string }[],
+      events: {
+        name: string;
+        category: AuditLogEntry["category"];
+        action: string;
+        summarize: (args: ethers.Result | null) => string;
+      }[]
     ) => {
       if (!contract) return;
 
-      const logsByType = await Promise.all(events.map(async (eventConfig) => {
-        const filterFactory = (contract.filters as unknown as Record<string, (() => ethers.DeferredTopicFilter) | undefined>)[eventConfig.name];
-        if (!filterFactory) return [];
+      const logsByType = await Promise.all(
+        events.map(async (eventConfig) => {
+          const filterFactory = (
+            contract.filters as unknown as Record<string, (() => ethers.DeferredTopicFilter) | undefined>
+          )[eventConfig.name];
+          if (!filterFactory) return [];
 
-        const eventsForType = await queryFilterInChunks(contract, filterFactory(), provider, startBlock);
-        return eventsForType.map((event) => ({ event, eventConfig }));
-      }));
+          const eventsForType = await queryFilterInChunks(contract, filterFactory(), provider, startBlock);
+          return eventsForType.map((event) => ({ event, eventConfig }));
+        })
+      );
 
       for (const { event, eventConfig } of logsByType.flat()) {
         nextAuditLogs.push({
@@ -270,36 +299,160 @@ export default function AdminDashboard() {
     try {
       await Promise.all([
         appendAuditLogs(savingCore, "SavingCore", DEPLOYMENT_BLOCKS.SavingCore, [
-          { name: "PlanCreated", category: "plans", action: "Plan created", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} created` },
-          { name: "PlanUpdated", category: "plans", action: "Plan updated", summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} APR/status updated` },
-          { name: "Paused", category: "admin", action: "SavingCore paused", summarize: () => "SavingCore emergency pause enabled" },
-          { name: "Unpaused", category: "admin", action: "SavingCore unpaused", summarize: () => "SavingCore emergency pause disabled" },
-          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
-          { name: "DepositMarketplaceUpdated", category: "marketplace", action: "Marketplace updated", summarize: () => "Authorized deposit marketplace changed" },
-          { name: "DepositMarketplaceLocked", category: "marketplace", action: "Marketplace locked", summarize: () => "Authorized deposit marketplace permanently locked" },
-          { name: "MetadataImageURIUpdated", category: "admin", action: "Metadata image updated", summarize: () => "Deposit certificate metadata image URI updated" },
-          { name: "MetadataPermanentlyLocked", category: "admin", action: "Metadata locked", summarize: () => "Deposit certificate metadata permanently locked" },
+          {
+            name: "PlanCreated",
+            category: "plans",
+            action: "Plan created",
+            summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} created`,
+          },
+          {
+            name: "PlanUpdated",
+            category: "plans",
+            action: "Plan updated",
+            summarize: (args) => `Plan #${args?.[0]?.toString() ?? "?"} APR/status updated`,
+          },
+          {
+            name: "Paused",
+            category: "admin",
+            action: "SavingCore paused",
+            summarize: () => "SavingCore emergency pause enabled",
+          },
+          {
+            name: "Unpaused",
+            category: "admin",
+            action: "SavingCore unpaused",
+            summarize: () => "SavingCore emergency pause disabled",
+          },
+          {
+            name: "AdminUpdated",
+            category: "admin",
+            action: "Admin updated",
+            summarize: (args) =>
+              `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}`,
+          },
+          {
+            name: "DepositMarketplaceUpdated",
+            category: "marketplace",
+            action: "Marketplace updated",
+            summarize: () => "Authorized deposit marketplace changed",
+          },
+          {
+            name: "DepositMarketplaceLocked",
+            category: "marketplace",
+            action: "Marketplace locked",
+            summarize: () => "Authorized deposit marketplace permanently locked",
+          },
+          {
+            name: "MetadataImageURIUpdated",
+            category: "admin",
+            action: "Metadata image updated",
+            summarize: () => "Deposit certificate metadata image URI updated",
+          },
+          {
+            name: "MetadataPermanentlyLocked",
+            category: "admin",
+            action: "Metadata locked",
+            summarize: () => "Deposit certificate metadata permanently locked",
+          },
+          {
+            name: "AutoRenewGracePeriodUpdated",
+            category: "admin",
+            action: "Auto-renew grace updated",
+            summarize: (args) =>
+              `Grace ${formatDuration((args?.[0] as bigint | undefined) ?? 0n)} -> ${formatDuration(
+                (args?.[1] as bigint | undefined) ?? 0n
+              )}`,
+          },
         ]),
         appendAuditLogs(vaultManager, "VaultManager", DEPLOYMENT_BLOCKS.VaultManager, [
-          { name: "FeeReceiverUpdated", category: "vault", action: "Fee receiver updated", summarize: () => "Early-withdrawal fee receiver changed" },
-          { name: "VaultFunded", category: "vault", action: "Vault funded", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} added to interest vault` },
-          { name: "VaultWithdrawn", category: "vault", action: "Vault withdrawn", summarize: (args) => `${formatUsdc(args?.[1] as bigint)} withdrawn from interest vault` },
-          { name: "SavingCoreUpdated", category: "admin", action: "SavingCore updated", summarize: () => "Authorized SavingCore changed" },
-          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
-          { name: "SavingCoreLocked", category: "admin", action: "SavingCore locked", summarize: () => "Authorized SavingCore permanently locked" },
-          { name: "Paused", category: "admin", action: "VaultManager paused", summarize: () => "VaultManager pause enabled" },
-          { name: "Unpaused", category: "admin", action: "VaultManager unpaused", summarize: () => "VaultManager pause disabled" },
+          {
+            name: "FeeReceiverUpdated",
+            category: "vault",
+            action: "Fee receiver updated",
+            summarize: () => "Early-withdrawal fee receiver changed",
+          },
+          {
+            name: "VaultFunded",
+            category: "vault",
+            action: "Vault funded",
+            summarize: (args) => `${formatUsdc(args?.[1] as bigint)} added to interest vault`,
+          },
+          {
+            name: "VaultWithdrawn",
+            category: "vault",
+            action: "Vault withdrawn",
+            summarize: (args) => `${formatUsdc(args?.[1] as bigint)} withdrawn from interest vault`,
+          },
+          {
+            name: "SavingCoreUpdated",
+            category: "admin",
+            action: "SavingCore updated",
+            summarize: () => "Authorized SavingCore changed",
+          },
+          {
+            name: "AdminUpdated",
+            category: "admin",
+            action: "Admin updated",
+            summarize: (args) =>
+              `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}`,
+          },
+          {
+            name: "SavingCoreLocked",
+            category: "admin",
+            action: "SavingCore locked",
+            summarize: () => "Authorized SavingCore permanently locked",
+          },
+          {
+            name: "Paused",
+            category: "admin",
+            action: "VaultManager paused",
+            summarize: () => "VaultManager pause enabled",
+          },
+          {
+            name: "Unpaused",
+            category: "admin",
+            action: "VaultManager unpaused",
+            summarize: () => "VaultManager pause disabled",
+          },
         ]),
         appendAuditLogs(depositMarketplace, "DepositMarketplace", DEPLOYMENT_BLOCKS.DepositMarketplace, [
-          { name: "TermsHashUpdated", category: "marketplace", action: "Terms updated", summarize: () => "Marketplace terms hash changed" },
-          { name: "UnlistedDepositRecovered", category: "marketplace", action: "Deposit recovered", summarize: (args) => `Deposit #${args?.[0]?.toString() ?? "?"} recovered from marketplace` },
-          { name: "AdminUpdated", category: "admin", action: "Admin updated", summarize: (args) => `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}` },
-          { name: "Paused", category: "admin", action: "Marketplace paused", summarize: () => "Marketplace pause enabled" },
-          { name: "Unpaused", category: "admin", action: "Marketplace unpaused", summarize: () => "Marketplace pause disabled" },
+          {
+            name: "TermsHashUpdated",
+            category: "marketplace",
+            action: "Terms updated",
+            summarize: () => "Marketplace terms hash changed",
+          },
+          {
+            name: "UnlistedDepositRecovered",
+            category: "marketplace",
+            action: "Deposit recovered",
+            summarize: (args) => `Deposit #${args?.[0]?.toString() ?? "?"} recovered from marketplace`,
+          },
+          {
+            name: "AdminUpdated",
+            category: "admin",
+            action: "Admin updated",
+            summarize: (args) =>
+              `Admin ${formatAddress(String(args?.[0] ?? ""))} -> ${formatAddress(String(args?.[1] ?? ""))}`,
+          },
+          {
+            name: "Paused",
+            category: "admin",
+            action: "Marketplace paused",
+            summarize: () => "Marketplace pause enabled",
+          },
+          {
+            name: "Unpaused",
+            category: "admin",
+            action: "Marketplace unpaused",
+            summarize: () => "Marketplace pause disabled",
+          },
         ]),
       ]);
 
-      setAuditLogs(nextAuditLogs.sort((left, right) => right.blockNumber - left.blockNumber || right.logIndex - left.logIndex));
+      setAuditLogs(
+        nextAuditLogs.sort((left, right) => right.blockNumber - left.blockNumber || right.logIndex - left.logIndex)
+      );
     } catch (error) {
       setErrorMessage(parseError(error));
     }
@@ -333,7 +486,17 @@ export default function AdminDashboard() {
     setErrorMessage("");
 
     try {
-      const [vaultFund, withdrawableVault, reserve, principal, receiver, corePaused, vaultPaused, nextPlanId] = await Promise.all([
+      const [
+        vaultFund,
+        withdrawableVault,
+        reserve,
+        principal,
+        receiver,
+        corePaused,
+        vaultPaused,
+        gracePeriod,
+        nextPlanId,
+      ] = await Promise.all([
         mockUSDC.balanceOf(CONTRACT_ADDRESSES.VaultManager) as Promise<bigint>,
         vaultManager.withdrawableVaultBalance() as Promise<bigint>,
         vaultManager.reservedInterest() as Promise<bigint>,
@@ -341,6 +504,7 @@ export default function AdminDashboard() {
         vaultManager.feeReceiver() as Promise<string>,
         savingCore.paused() as Promise<boolean>,
         vaultManager.paused() as Promise<boolean>,
+        savingCore.autoRenewGracePeriod() as Promise<bigint>,
         savingCore.nextPlanId() as Promise<bigint>,
       ]);
       const receiverBalance = (await mockUSDC.balanceOf(receiver)) as bigint;
@@ -386,6 +550,7 @@ export default function AdminDashboard() {
       setFeeReceiverBalance(receiverBalance);
       setSavingCorePaused(corePaused);
       setVaultManagerPaused(vaultPaused);
+      setAutoRenewGracePeriod(gracePeriod);
       setPlans(fetchedPlans);
       setAdminDeposits(fetchedDeposits.sort((left, right) => Number(right.id - left.id)));
     } catch (error) {
@@ -395,28 +560,31 @@ export default function AdminDashboard() {
     }
   }, [mockUSDC, parseError, savingCore, vaultManager]);
 
-  const runTransaction = useCallback(async (
-    label: string,
-    action: () => Promise<ethers.TransactionResponse>,
-    successMessage = "Transaction confirmed."
-  ) => {
-    setTxStatus(label);
-    setErrorMessage("");
-    setAlertMessage("");
-    setDismissedToastIds(new Set());
+  const runTransaction = useCallback(
+    async (
+      label: string,
+      action: () => Promise<ethers.TransactionResponse>,
+      successMessage = "Transaction confirmed."
+    ) => {
+      setTxStatus(label);
+      setErrorMessage("");
+      setAlertMessage("");
+      setDismissedToastIds(new Set());
 
-    try {
-      const tx = await action();
-      setTxStatus("Waiting for confirmation...");
-      await tx.wait();
-      setAlertMessage(successMessage);
-      await refreshAdminData();
-    } catch (error) {
-      setErrorMessage(parseError(error));
-    } finally {
-      setTxStatus("");
-    }
-  }, [parseError, refreshAdminData]);
+      try {
+        const tx = await action();
+        setTxStatus("Waiting for confirmation...");
+        await tx.wait();
+        setAlertMessage(successMessage);
+        await refreshAdminData();
+      } catch (error) {
+        setErrorMessage(parseError(error));
+      } finally {
+        setTxStatus("");
+      }
+    },
+    [parseError, refreshAdminData]
+  );
 
   async function handleFundVault() {
     if (!mockUSDC || !vaultManager || !fundAmount) return;
@@ -479,7 +647,8 @@ export default function AdminDashboard() {
     requestConfirmation(
       {
         title: "Update fee receiver?",
-        description: "Future early-withdrawal penalties will be sent to this address. Existing deposits are not otherwise changed.",
+        description:
+          "Future early-withdrawal penalties will be sent to this address. Existing deposits are not otherwise changed.",
         confirmLabel: "Update Receiver",
         details: [
           { label: "Current receiver", value: feeReceiver || "Not loaded" },
@@ -498,7 +667,7 @@ export default function AdminDashboard() {
   function handleCreatePlan() {
     if (!savingCore) return;
 
-    const tenorDays = BigInt(createPlanForm.tenorDays || "0");
+    const tenorSeconds = durationToSeconds(createPlanForm.tenorValue, createPlanForm.tenorUnit);
     const aprBps = percentToBps(createPlanForm.aprPercent);
     const minDeposit = parseUsdc(createPlanForm.minDeposit);
     const maxDeposit = parseUsdc(createPlanForm.maxDeposit);
@@ -508,7 +677,7 @@ export default function AdminDashboard() {
       "Creating plan...",
       () =>
         savingCore.createPlan(
-          tenorDays,
+          tenorSeconds,
           aprBps,
           minDeposit,
           maxDeposit,
@@ -519,6 +688,30 @@ export default function AdminDashboard() {
     );
   }
 
+  function handleUpdateAutoRenewGrace() {
+    if (!savingCore || !graceValue) return;
+
+    const nextGrace = durationToSeconds(graceValue, graceUnit);
+    requestConfirmation(
+      {
+        title: "Update auto-renew grace?",
+        description:
+          "This controls how long after maturity permissionless auto-renewal must wait. Use 15 minutes for demos or 3 days for the assignment default.",
+        confirmLabel: "Update Grace",
+        details: [
+          { label: "Current grace", value: formatDuration(autoRenewGracePeriod) },
+          { label: "New grace", value: formatDuration(nextGrace) },
+        ],
+      },
+      () =>
+        void runTransaction(
+          "Updating auto-renew grace...",
+          () => savingCore.setAutoRenewGracePeriod(nextGrace) as Promise<ethers.TransactionResponse>,
+          "Auto-renew grace updated."
+        )
+    );
+  }
+
   function handleUpdateApr(plan: SavingPlan, nextApr: string) {
     if (!savingCore) return;
     if (!nextApr) return;
@@ -526,7 +719,8 @@ export default function AdminDashboard() {
     requestConfirmation(
       {
         title: "Update plan APR?",
-        description: "This affects new deposits and future manual renewals only. Existing deposit snapshots do not change.",
+        description:
+          "This affects new deposits and future manual renewals only. Existing deposit snapshots do not change.",
         confirmLabel: "Update APR",
         details: [
           { label: "Plan", value: `#${plan.id.toString()}` },
@@ -556,7 +750,7 @@ export default function AdminDashboard() {
         tone: plan.enabled ? "danger" : "default",
         details: [
           { label: "Plan", value: `#${plan.id.toString()}` },
-          { label: "Tenor", value: `${plan.tenorDays.toString()} days` },
+          { label: "Tenor", value: formatDuration(plan.tenorSeconds) },
           { label: "APR", value: formatBps(plan.aprBps) },
         ],
       },
@@ -645,8 +839,8 @@ export default function AdminDashboard() {
         <section className="page-card dashboard-hero">
           <p className="eyebrow">Admin Dashboard</p>
           <h1>Access Denied</h1>
-          <p style={{paddingBottom:"20px"}}>Access Denied: You not have permission to access this area.</p>
-          <Link className="primary-button" to="/" >
+          <p style={{ paddingBottom: "20px" }}>Access Denied: You not have permission to access this area.</p>
+          <Link className="primary-button" to="/">
             Return to User Dashboard
           </Link>
         </section>
@@ -660,14 +854,27 @@ export default function AdminDashboard() {
       <section className="page-card dashboard-hero">
         <p className="eyebrow">Defi Banking Admin</p>
         <h1>Banking control center</h1>
-        <p>Create savings plans, protect vault liquidity, monitor reserves, and manage emergency controls from one admin workspace.</p>
+        <p>
+          Create savings plans, protect vault liquidity, monitor reserves, and manage emergency controls from one admin
+          workspace.
+        </p>
       </section>
 
-      {!account && <p className="status-message">Connect the owner or admin wallet to perform administrative actions.</p>}
-      {adminRole && adminRole !== "unauthorized" && (
-        <p className="status-message">Connected role: {adminRole === "owner" ? "Deployer owner" : "Operational admin"}</p>
+      {!account && (
+        <p className="status-message">Connect the owner or admin wallet to perform administrative actions.</p>
       )}
-      {isLoading && <UiStatePanel kind="loading" title="Loading admin data" message="Refreshing plans, vault balances, and deposits from Sepolia." />}
+      {adminRole && adminRole !== "unauthorized" && (
+        <p className="status-message">
+          Connected role: {adminRole === "owner" ? "Deployer owner" : "Operational admin"}
+        </p>
+      )}
+      {isLoading && (
+        <UiStatePanel
+          kind="loading"
+          title="Loading admin data"
+          message="Refreshing plans, vault balances, and deposits from Sepolia."
+        />
+      )}
 
       <section className="section-panel">
         <div className="section-header">
@@ -710,12 +917,16 @@ export default function AdminDashboard() {
           <article className="plan-card">
             <p className="eyebrow">SavingCore</p>
             <h3>{savingCorePaused ? "Paused" : "Active"}</h3>
-            <StatusBadge tone={savingCorePaused ? "warning" : "success"}>{savingCorePaused ? "Paused" : "Active"}</StatusBadge>
+            <StatusBadge tone={savingCorePaused ? "warning" : "success"}>
+              {savingCorePaused ? "Paused" : "Active"}
+            </StatusBadge>
           </article>
           <article className="plan-card">
             <p className="eyebrow">VaultManager</p>
             <h3>{vaultManagerPaused ? "Paused" : "Active"}</h3>
-            <StatusBadge tone={vaultManagerPaused ? "warning" : "success"}>{vaultManagerPaused ? "Paused" : "Active"}</StatusBadge>
+            <StatusBadge tone={vaultManagerPaused ? "warning" : "success"}>
+              {vaultManagerPaused ? "Paused" : "Active"}
+            </StatusBadge>
           </article>
         </div>
 
@@ -771,6 +982,41 @@ export default function AdminDashboard() {
 
         <div className="inline-form-grid admin-controls">
           <label className="form-row">
+            Auto-Renew Grace
+            <input
+              inputMode="numeric"
+              min="1"
+              type="number"
+              value={graceValue}
+              onChange={(event) => setGraceValue(event.target.value)}
+              disabled={isBusy}
+            />
+          </label>
+          <label className="form-row">
+            Grace Unit
+            <select
+              value={graceUnit}
+              onChange={(event) => setGraceUnit(event.target.value as DurationUnit)}
+              disabled={isBusy}
+            >
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+            </select>
+          </label>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={handleUpdateAutoRenewGrace}
+            disabled={isBusy || !graceValue}
+          >
+            Update Grace
+          </button>
+          <p className="helper-text">Current grace: {formatDuration(autoRenewGracePeriod)}.</p>
+        </div>
+
+        <div className="inline-form-grid admin-controls">
+          <label className="form-row">
             New Fee Receiver
             <input
               placeholder="0x..."
@@ -798,14 +1044,26 @@ export default function AdminDashboard() {
         </div>
         <div className="inline-form-grid">
           <label className="form-row">
-            Tenor Days
+            Tenor
             <input
               min="1"
               type="number"
-              value={createPlanForm.tenorDays}
-              onChange={(event) => updateCreatePlanField("tenorDays", event.target.value)}
+              value={createPlanForm.tenorValue}
+              onChange={(event) => updateCreatePlanField("tenorValue", event.target.value)}
               disabled={isBusy}
             />
+          </label>
+          <label className="form-row">
+            Tenor Unit
+            <select
+              value={createPlanForm.tenorUnit}
+              onChange={(event) => updateCreatePlanField("tenorUnit", event.target.value as DurationUnit)}
+              disabled={isBusy}
+            >
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+            </select>
           </label>
           <label className="form-row">
             APR (%)
@@ -897,13 +1155,15 @@ export default function AdminDashboard() {
                 plans.map((plan) => (
                   <tr key={plan.id.toString()}>
                     <td>{plan.id.toString()}</td>
-                    <td>{plan.tenorDays.toString()} days</td>
+                    <td>{formatDuration(plan.tenorSeconds)}</td>
                     <td>{formatBps(plan.aprBps)}</td>
                     <td>{formatDepositLimit(plan.minDeposit, "minimum")}</td>
                     <td>{formatDepositLimit(plan.maxDeposit, "maximum")}</td>
                     <td>{formatBps(plan.earlyWithdrawPenaltyBps)}</td>
                     <td>
-                      <StatusBadge tone={plan.enabled ? "success" : "danger"}>{plan.enabled ? "Enabled" : "Disabled"}</StatusBadge>
+                      <StatusBadge tone={plan.enabled ? "success" : "danger"}>
+                        {plan.enabled ? "Enabled" : "Disabled"}
+                      </StatusBadge>
                     </td>
                     <td>
                       <div className="table-actions">
@@ -950,7 +1210,10 @@ export default function AdminDashboard() {
         <div className="section-header">
           <p className="eyebrow">Interest Vault</p>
           <h2>Vault payment summary</h2>
-          <p>Simple view of how much interest the vault needs to pay, how much USDC can be withdrawn, and whether the vault is funded enough.</p>
+          <p>
+            Simple view of how much interest the vault needs to pay, how much USDC can be withdrawn, and whether the
+            vault is funded enough.
+          </p>
         </div>
         <div className="admin-summary-grid">
           <article className="plan-card">
@@ -978,7 +1241,10 @@ export default function AdminDashboard() {
           <div className="section-title-row">
             <div>
               <h2>All deposit certificates</h2>
-              <p>Review every deposit, including active certificates, closed positions, marketplace escrow, and deferred interest claims.</p>
+              <p>
+                Review every deposit, including active certificates, closed positions, marketplace escrow, and deferred
+                interest claims.
+              </p>
             </div>
             <label className="form-row compact-filter">
               Show
@@ -990,7 +1256,9 @@ export default function AdminDashboard() {
                 }}
               >
                 {Object.entries(DEPOSIT_FILTER_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
                 ))}
               </select>
             </label>
@@ -1023,11 +1291,15 @@ export default function AdminDashboard() {
                   <tr key={deposit.id.toString()}>
                     <td>{deposit.id.toString()}</td>
                     <td>
-                      <StatusBadge tone={statusToneForLabel(DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown")}>
+                      <StatusBadge
+                        tone={statusToneForLabel(DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown")}
+                      >
                         {DEPOSIT_STATUS_LABELS[deposit.status.toString()] ?? "Unknown"}
                       </StatusBadge>
                     </td>
-                    <td className="address-text" title={deposit.owner ?? undefined}>{formatAddress(deposit.owner)}</td>
+                    <td className="address-text" title={deposit.owner ?? undefined}>
+                      {formatAddress(deposit.owner)}
+                    </td>
                     <td>{deposit.planId.toString()}</td>
                     <td>{formatUsdc(deposit.principal)}</td>
                     <td>{formatBps(deposit.aprBpsAtOpen)}</td>
@@ -1036,7 +1308,9 @@ export default function AdminDashboard() {
                     <td>
                       {deposit.unpaidInterest > 0n ? (
                         <span title={deposit.interestClaimant ?? undefined}>{formatUsdc(deposit.unpaidInterest)}</span>
-                      ) : "None"}
+                      ) : (
+                        "None"
+                      )}
                     </td>
                   </tr>
                 ))
@@ -1045,11 +1319,23 @@ export default function AdminDashboard() {
           </table>
         </div>
         <div className="pagination-row admin-pagination-row">
-          <button className="secondary-button compact-button" type="button" disabled={depositPagination.safePage === 0} onClick={() => setDepositPage((page) => Math.max(0, page - 1))}>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={depositPagination.safePage === 0}
+            onClick={() => setDepositPage((page) => Math.max(0, page - 1))}
+          >
             Previous
           </button>
-          <span>Page {depositPagination.safePage + 1} of {depositPagination.totalPages} · {filteredDeposits.length} deposits</span>
-          <button className="secondary-button compact-button" type="button" disabled={depositPagination.safePage >= depositPagination.totalPages - 1} onClick={() => setDepositPage((page) => page + 1)}>
+          <span>
+            Page {depositPagination.safePage + 1} of {depositPagination.totalPages} · {filteredDeposits.length} deposits
+          </span>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={depositPagination.safePage >= depositPagination.totalPages - 1}
+            onClick={() => setDepositPage((page) => page + 1)}
+          >
             Next
           </button>
         </div>
@@ -1061,7 +1347,9 @@ export default function AdminDashboard() {
           <div className="section-title-row">
             <div>
               <h2>Owner and admin activity</h2>
-              <p>Event-based audit trail for operational actions. Sender is read from each transaction when available.</p>
+              <p>
+                Event-based audit trail for operational actions. Sender is read from each transaction when available.
+              </p>
             </div>
             <label className="form-row compact-filter">
               Show
@@ -1073,7 +1361,9 @@ export default function AdminDashboard() {
                 }}
               >
                 {Object.entries(AUDIT_FILTER_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
                 ))}
               </select>
             </label>
@@ -1081,7 +1371,9 @@ export default function AdminDashboard() {
         </div>
 
         <div className="admin-table-wrap">
-          <p className="table-scroll-hint">Scroll sideways to review sender and transaction details on smaller screens.</p>
+          <p className="table-scroll-hint">
+            Scroll sideways to review sender and transaction details on smaller screens.
+          </p>
           <table className="admin-table">
             <thead>
               <tr>
@@ -1104,14 +1396,22 @@ export default function AdminDashboard() {
                   <tr key={log.id}>
                     <td>{log.blockNumber}</td>
                     <td>
-                      <StatusBadge tone={statusToneForLabel(AUDIT_FILTER_LABELS[log.category])}>{AUDIT_FILTER_LABELS[log.category]}</StatusBadge>
+                      <StatusBadge tone={statusToneForLabel(AUDIT_FILTER_LABELS[log.category])}>
+                        {AUDIT_FILTER_LABELS[log.category]}
+                      </StatusBadge>
                     </td>
                     <td>{log.contractName}</td>
                     <td>{log.action}</td>
                     <td>{log.summary}</td>
-                    <td className="address-text" title={log.actor ?? undefined}>{formatAddress(log.actor)}</td>
+                    <td className="address-text" title={log.actor ?? undefined}>
+                      {formatAddress(log.actor)}
+                    </td>
                     <td>
-                      <a href={`https://sepolia.etherscan.io/tx/${log.transactionHash}`} target="_blank" rel="noreferrer">
+                      <a
+                        href={`https://sepolia.etherscan.io/tx/${log.transactionHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
                         View
                       </a>
                     </td>
@@ -1122,11 +1422,23 @@ export default function AdminDashboard() {
           </table>
         </div>
         <div className="pagination-row admin-pagination-row">
-          <button className="secondary-button compact-button" type="button" disabled={auditPagination.safePage === 0} onClick={() => setAuditPage((page) => Math.max(0, page - 1))}>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={auditPagination.safePage === 0}
+            onClick={() => setAuditPage((page) => Math.max(0, page - 1))}
+          >
             Previous
           </button>
-          <span>Page {auditPagination.safePage + 1} of {auditPagination.totalPages} · {filteredAuditLogs.length} logs</span>
-          <button className="secondary-button compact-button" type="button" disabled={auditPagination.safePage >= auditPagination.totalPages - 1} onClick={() => setAuditPage((page) => page + 1)}>
+          <span>
+            Page {auditPagination.safePage + 1} of {auditPagination.totalPages} · {filteredAuditLogs.length} logs
+          </span>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            disabled={auditPagination.safePage >= auditPagination.totalPages - 1}
+            onClick={() => setAuditPage((page) => page + 1)}
+          >
             Next
           </button>
         </div>
@@ -1187,7 +1499,7 @@ async function queryFilterInChunks(
   contract: ethers.Contract,
   filter: ethers.DeferredTopicFilter,
   provider: ethers.BrowserProvider,
-  startBlock: number,
+  startBlock: number
 ) {
   const latestBlockNumber = await provider.getBlockNumber();
   const events = [];

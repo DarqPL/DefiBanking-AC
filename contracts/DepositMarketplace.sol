@@ -384,8 +384,7 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
      */
     function noListingDays(uint256 depositId) public view returns (uint256 daysCount) {
         (,, uint64 startAt, uint64 maturityAt,,,) = savingCore.deposits(depositId);
-        uint256 tenorDays = (uint256(maturityAt) - startAt) / 1 days;
-        daysCount = _noListingDaysFromTenor(tenorDays);
+        daysCount = _noListingSecondsFromTimestamps(startAt, maturityAt) / 1 days;
     }
 
     /**
@@ -495,7 +494,10 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
      * @dev Returns true when a deposit is inside or past the marketplace restricted window.
      */
     function _isRestricted(uint64 startAt, uint64 maturityAt) private view returns (bool) {
-        uint256 blockedAt = uint256(maturityAt) - (_noListingDaysFromTimestamps(startAt, maturityAt) * 1 days);
+        uint256 noListingSeconds = _noListingSecondsFromTimestamps(startAt, maturityAt);
+        if (noListingSeconds >= uint256(maturityAt) - startAt) return true;
+
+        uint256 blockedAt = uint256(maturityAt) - noListingSeconds;
         return block.timestamp >= blockedAt;
     }
 
@@ -515,19 +517,15 @@ contract DepositMarketplace is IERC721Receiver, Ownable, Pausable {
     }
 
     /**
-     * @dev Calculates no-listing days from deposit timestamps.
+     * @dev Calculates no-listing seconds from deposit timestamps.
      */
-    function _noListingDaysFromTimestamps(uint64 startAt, uint64 maturityAt) private pure returns (uint256 daysCount) {
-        uint256 tenorDays = (uint256(maturityAt) - startAt) / 1 days;
-        daysCount = _noListingDaysFromTenor(tenorDays);
-    }
+    function _noListingSecondsFromTimestamps(uint64 startAt, uint64 maturityAt) private pure returns (uint256 secondsCount) {
+        uint256 tenorSeconds = uint256(maturityAt) - startAt;
+        secondsCount = (tenorSeconds * NO_LISTING_PERCENT) / 100;
+        uint256 minSeconds = MIN_NO_LISTING_DAYS * 1 days;
+        if (secondsCount < minSeconds) return minSeconds;
 
-    /**
-     * @dev Applies the marketplace no-listing formula to a tenor in days.
-     */
-    function _noListingDaysFromTenor(uint256 tenorDays) private pure returns (uint256 daysCount) {
-        daysCount = (tenorDays * NO_LISTING_PERCENT) / 100;
-        if (daysCount < MIN_NO_LISTING_DAYS) return MIN_NO_LISTING_DAYS;
-        if (daysCount > MAX_NO_LISTING_DAYS) return MAX_NO_LISTING_DAYS;
+        uint256 maxSeconds = MAX_NO_LISTING_DAYS * 1 days;
+        if (secondsCount > maxSeconds) return maxSeconds;
     }
 }

@@ -14,6 +14,7 @@ import {
   formatApr,
   formatDate,
   formatDepositLimit,
+  formatDuration,
   formatRemainingTime,
   formatUsdc,
   getProgressPercent,
@@ -25,7 +26,7 @@ type SavingPlan = {
   id: bigint;
   minDeposit: bigint;
   maxDeposit: bigint;
-  tenorDays: bigint;
+  tenorSeconds: bigint;
   aprBps: bigint;
   earlyWithdrawPenaltyBps: bigint;
   enabled: boolean;
@@ -76,7 +77,7 @@ function normalizePlan(id: bigint, plan: unknown): SavingPlan {
   const values = plan as {
     minDeposit: bigint;
     maxDeposit: bigint;
-    tenorDays: bigint;
+    tenorSeconds: bigint;
     aprBps: bigint;
     earlyWithdrawPenaltyBps: bigint;
     enabled: boolean;
@@ -86,7 +87,7 @@ function normalizePlan(id: bigint, plan: unknown): SavingPlan {
     id,
     minDeposit: values.minDeposit,
     maxDeposit: values.maxDeposit,
-    tenorDays: values.tenorDays,
+    tenorSeconds: values.tenorSeconds,
     aprBps: values.aprBps,
     earlyWithdrawPenaltyBps: values.earlyWithdrawPenaltyBps,
     enabled: values.enabled,
@@ -167,7 +168,7 @@ function PlanCard({
       <p className="plan-rate">
         {formatApr(plan.aprBps)} <span>APR</span>
       </p>
-      <p className="plan-tenor">{plan.tenorDays.toString()} day fixed term</p>
+      <p className="plan-tenor">{formatDuration(plan.tenorSeconds)} fixed term</p>
       <dl className="meta-list">
         <div>
           <dt>Deposit Range</dt>
@@ -218,7 +219,7 @@ function OpenDepositForm({
           <select value={selectedPlanId} onChange={(event) => onPlanChange(event.target.value)} disabled={isBusy}>
             {plans.map((plan) => (
               <option key={plan.id.toString()} value={plan.id.toString()}>
-                {plan.tenorDays.toString()} days - {formatApr(plan.aprBps)} APR
+                {formatDuration(plan.tenorSeconds)} - {formatApr(plan.aprBps)} APR
               </option>
             ))}
           </select>
@@ -386,7 +387,7 @@ function DepositCard({
               >
                 {plans.map((plan) => (
                   <option key={plan.id.toString()} value={plan.id.toString()}>
-                    Renew: {plan.tenorDays.toString()} days
+                    Renew: {formatDuration(plan.tenorSeconds)}
                   </option>
                 ))}
               </select>
@@ -766,7 +767,7 @@ export default function UserDashboard() {
         confirmLabel: "Renew Deposit",
         details: [
           { label: "Deposit", value: `#${depositId.toString()}` },
-          { label: "New plan", value: renewPlan ? `#${renewPlan.id.toString()} · ${renewPlan.tenorDays.toString()} days` : `#${selectedRenewPlanId}` },
+          { label: "New plan", value: renewPlan ? `#${renewPlan.id.toString()} · ${formatDuration(renewPlan.tenorSeconds)}` : `#${selectedRenewPlanId}` },
           ...(deposit ? [{ label: "Estimated new principal", value: formatUsdc(deposit.principal + calculateInterest(deposit)) }] : []),
         ],
       },
@@ -795,7 +796,7 @@ export default function UserDashboard() {
         confirmLabel: "Continue",
         details: [
           { label: "Deposit", value: `#${depositId.toString()}` },
-          { label: "New plan", value: renewPlan ? `#${renewPlan.id.toString()} · ${renewPlan.tenorDays.toString()} days` : `#${selectedRenewPlanId}` },
+          { label: "New plan", value: renewPlan ? `#${renewPlan.id.toString()} · ${formatDuration(renewPlan.tenorSeconds)}` : `#${selectedRenewPlanId}` },
           ...(deposit
             ? [
                 { label: "Interest payout", value: formatUsdc(calculateInterest(deposit)) },
@@ -987,7 +988,7 @@ export default function UserDashboard() {
               description: "Your wallet will approve MockUSDC if needed, then open a fixed-term deposit certificate.",
               confirmLabel: "Open Deposit",
               details: [
-                { label: "Plan", value: `#${selectedPlan.id.toString()} · ${selectedPlan.tenorDays.toString()} days` },
+                { label: "Plan", value: `#${selectedPlan.id.toString()} · ${formatDuration(selectedPlan.tenorSeconds)}` },
                 { label: "APR", value: formatApr(selectedPlan.aprBps) },
                 { label: "Amount", value: `${depositAmountInput} USDC` },
               ],

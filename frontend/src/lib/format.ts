@@ -23,6 +23,29 @@ export function formatBps(value: bigint) {
   return formatApr(value)
 }
 
+export function formatDuration(seconds: bigint) {
+  const day = 86_400n
+  const hour = 3_600n
+  const minute = 60n
+
+  if (seconds !== 0n && seconds % day === 0n) {
+    const days = seconds / day
+    return `${days.toString()} ${days === 1n ? 'day' : 'days'}`
+  }
+
+  if (seconds !== 0n && seconds % hour === 0n) {
+    const hours = seconds / hour
+    return `${hours.toString()} ${hours === 1n ? 'hour' : 'hours'}`
+  }
+
+  if (seconds !== 0n && seconds % minute === 0n) {
+    const minutes = seconds / minute
+    return `${minutes.toString()} ${minutes === 1n ? 'minute' : 'minutes'}`
+  }
+
+  return `${seconds.toString()} ${seconds === 1n ? 'second' : 'seconds'}`
+}
+
 export function formatDate(timestamp: bigint) {
   return new Date(Number(timestamp) * 1000).toLocaleString()
 }

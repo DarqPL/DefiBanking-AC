@@ -64,8 +64,8 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @notice Number of seconds used for simple-interest APR calculations.
     uint256 public constant YEAR_SECONDS = 365 days;
 
-    /// @notice Delay after maturity before any caller can trigger auto-renewal.
-    uint256 public constant AUTO_RENEW_GRACE_PERIOD = 3 days;
+    /// @notice Default delay after maturity before any caller can trigger auto-renewal.
+    uint256 public constant DEFAULT_AUTO_RENEW_GRACE_PERIOD = 3 days;
 
     /// @notice ERC20 token accepted for term deposits, expected to be USDC or MockUSDC.
     IERC20 public immutable token;
@@ -88,6 +88,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /// @notice IPFS image URI used in dynamically generated deposit NFT metadata.
     string public metadataImageURI;
 
+    /// @notice Delay after maturity before any caller can trigger auto-renewal.
+    uint256 public autoRenewGracePeriod = DEFAULT_AUTO_RENEW_GRACE_PERIOD;
+
     /**
      * @notice Lifecycle status for a deposit NFT position.
      * @dev `None` is the default value for deposits that do not exist yet.
@@ -105,7 +108,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
      * @notice Configuration for a term-deposit plan.
      * @param minDeposit Minimum principal amount accepted for this plan.
      * @param maxDeposit Maximum principal amount accepted for this plan.
-     * @param tenorDays Lock duration in days.
+     * @param tenorSeconds Lock duration in seconds.
      * @param aprBps Annual percentage rate in basis points at the plan level.
      * @param earlyWithdrawPenaltyBps Early withdrawal penalty in basis points.
      * @param enabled Whether users will be allowed to open new deposits under this plan.
@@ -113,7 +116,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
     struct SavingPlan {
         uint256 minDeposit;
         uint256 maxDeposit;
-        uint64 tenorDays;
+        uint64 tenorSeconds;
         uint16 aprBps;
         uint16 earlyWithdrawPenaltyBps;
         bool enabled;
@@ -162,6 +165,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /// @dev Reverts when a tenor value is zero.
     error InvalidTenor();
+
+    /// @dev Reverts when an auto-renew grace period is zero.
+    error InvalidGracePeriod();
 
     /// @dev Reverts when APR exceeds the basis-points denominator.
     error InvalidApr();
@@ -252,7 +258,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
     /**
      * @notice Emitted when a saving plan is created.
      * @param planId Newly assigned plan id.
-     * @param tenorDays Lock duration in days.
+     * @param tenorSeconds Lock duration in seconds.
      * @param aprBps Annual percentage rate in basis points.
      * @param minDeposit Minimum principal amount accepted for this plan.
      * @param maxDeposit Maximum principal amount accepted for this plan.
@@ -261,7 +267,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
      */
     event PlanCreated(
         uint256 indexed planId,
-        uint64 tenorDays,
+        uint64 tenorSeconds,
         uint16 aprBps,
         uint256 minDeposit,
         uint256 maxDeposit,
@@ -409,6 +415,13 @@ contract SavingCore is ERC721, Ownable, Pausable {
     event MetadataPermanentlyLocked();
 
     /**
+     * @notice Emitted when the auto-renew grace period is updated.
+     * @param previousGracePeriod Previous grace period in seconds.
+     * @param newGracePeriod New grace period in seconds.
+     */
+    event AutoRenewGracePeriodUpdated(uint256 previousGracePeriod, uint256 newGracePeriod);
+
+    /**
      * @notice Initializes the deposit-position NFT metadata and owner.
      */
     constructor(address _token, address _vaultManager) ERC721("DeFi Saving Deposit", "DSD") Ownable(msg.sender) {
@@ -420,7 +433,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /**
      * @notice Creates a new term-deposit plan.
-     * @param tenorDays Lock duration in days.
+     * @param tenorSeconds Lock duration in seconds.
      * @param aprBps Annual percentage rate in basis points.
      * @param minDeposit Minimum principal amount accepted for this plan.
      * @param maxDeposit Maximum principal amount accepted for this plan.
@@ -429,14 +442,14 @@ contract SavingCore is ERC721, Ownable, Pausable {
      * @return planId Newly assigned plan id.
      */
     function createPlan(
-        uint64 tenorDays,
+        uint64 tenorSeconds,
         uint16 aprBps,
         uint256 minDeposit,
         uint256 maxDeposit,
         uint16 earlyWithdrawPenaltyBps,
         bool enabled
     ) external onlyOwnerOrAdmin returns (uint256 planId) {
-        _validatePlanConfig(tenorDays, aprBps, minDeposit, maxDeposit, earlyWithdrawPenaltyBps);
+        _validatePlanConfig(tenorSeconds, aprBps, minDeposit, maxDeposit, earlyWithdrawPenaltyBps);
 
         planId = nextPlanId;
         unchecked {
@@ -446,13 +459,13 @@ contract SavingCore is ERC721, Ownable, Pausable {
         savingPlans[planId] = SavingPlan({
             minDeposit: minDeposit,
             maxDeposit: maxDeposit,
-            tenorDays: tenorDays,
+            tenorSeconds: tenorSeconds,
             aprBps: aprBps,
             earlyWithdrawPenaltyBps: earlyWithdrawPenaltyBps,
             enabled: enabled
         });
 
-        emit PlanCreated(planId, tenorDays, aprBps, minDeposit, maxDeposit, earlyWithdrawPenaltyBps, enabled);
+        emit PlanCreated(planId, tenorSeconds, aprBps, minDeposit, maxDeposit, earlyWithdrawPenaltyBps, enabled);
     }
 
     /**
@@ -510,10 +523,9 @@ contract SavingCore is ERC721, Ownable, Pausable {
         if (minDeposit != 0 && amount < minDeposit) revert AmountBelowMinimum();
         if (maxDeposit != 0 && amount > maxDeposit) revert AmountAboveMaximum();
 
-        uint64 tenorDays = plan.tenorDays;
+        uint64 tenorSeconds = plan.tenorSeconds;
         uint16 aprBps = plan.aprBps;
         uint16 earlyWithdrawPenaltyBps = plan.earlyWithdrawPenaltyBps;
-        uint256 tenorSeconds = uint256(tenorDays) * 1 days;
         (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(tenorSeconds);
         uint256 depositId = _storeAndMintDeposit(
             msg.sender,
@@ -647,7 +659,8 @@ contract SavingCore is ERC721, Ownable, Pausable {
         uint256 newPrincipal = oldPrincipal + interest;
         _validateRenewedPrincipal(newPlan, newPrincipal);
 
-        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
+        uint64 newTenorSeconds = newPlan.tenorSeconds;
+        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(newTenorSeconds);
 
         oldDeposit.status = DepositStatus.ManualRenewed;
         _consumeDepositReserve(depositId);
@@ -660,7 +673,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             newPlan.aprBps,
             newPlan.earlyWithdrawPenaltyBps
         );
-        _reserveDepositInterest(newDepositId, newPrincipal, newPlan.aprBps, uint256(newPlan.tenorDays) * 1 days);
+        _reserveDepositInterest(newDepositId, newPrincipal, newPlan.aprBps, newTenorSeconds);
 
         emit Renewed(
             depositId,
@@ -688,7 +701,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
     function autoRenewDeposit(uint256 depositId) external whenNotPaused {
         DepositInfo storage oldDeposit = _getActiveDeposit(depositId);
         uint64 oldMaturityAt = oldDeposit.maturityAt;
-        uint256 renewAfter = uint256(oldMaturityAt) + AUTO_RENEW_GRACE_PERIOD;
+        uint256 renewAfter = uint256(oldMaturityAt) + autoRenewGracePeriod;
         if (block.timestamp < renewAfter) revert GracePeriodNotEnded();
 
         uint256 planId = oldDeposit.planId;
@@ -760,7 +773,8 @@ contract SavingCore is ERC721, Ownable, Pausable {
         if (interest != 0 && !vaultManager.canPayInterest(interest)) revert InterestUnavailable();
         _validateRenewedPrincipal(newPlan, principal);
 
-        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(uint256(newPlan.tenorDays) * 1 days);
+        uint64 newTenorSeconds = newPlan.tenorSeconds;
+        (uint64 startAt, uint64 maturityAt) = _currentTimestampAndMaturity(newTenorSeconds);
 
         oldDeposit.status = DepositStatus.ManualRenewed;
         _consumeDepositReserve(depositId);
@@ -773,7 +787,7 @@ contract SavingCore is ERC721, Ownable, Pausable {
             newPlan.aprBps,
             newPlan.earlyWithdrawPenaltyBps
         );
-        _reserveDepositInterest(newDepositId, principal, newPlan.aprBps, uint256(newPlan.tenorDays) * 1 days);
+        _reserveDepositInterest(newDepositId, principal, newPlan.aprBps, newTenorSeconds);
 
         emit InterestWithdrawnAndRenewed(depositId, newDepositId, account, newPlanId, principal, interest, startAt, maturityAt);
 
@@ -801,6 +815,19 @@ contract SavingCore is ERC721, Ownable, Pausable {
         admin = newAdmin;
 
         emit AdminUpdated(previousAdmin, newAdmin);
+    }
+
+    /**
+     * @notice Updates the grace period required before permissionless auto-renewal.
+     * @param newGracePeriod New nonzero grace period in seconds.
+     */
+    function setAutoRenewGracePeriod(uint256 newGracePeriod) external onlyOwnerOrAdmin {
+        if (newGracePeriod == 0) revert InvalidGracePeriod();
+
+        uint256 previousGracePeriod = autoRenewGracePeriod;
+        autoRenewGracePeriod = newGracePeriod;
+
+        emit AutoRenewGracePeriodUpdated(previousGracePeriod, newGracePeriod);
     }
 
     /**
@@ -1105,20 +1132,20 @@ contract SavingCore is ERC721, Ownable, Pausable {
 
     /**
      * @notice Validates saving plan configuration.
-     * @param tenorDays Lock duration in days.
+     * @param tenorSeconds Lock duration in seconds.
      * @param aprBps Annual percentage rate in basis points.
      * @param minDeposit Minimum principal amount accepted for this plan.
      * @param maxDeposit Maximum principal amount accepted for this plan.
      * @param earlyWithdrawPenaltyBps Early withdrawal penalty in basis points.
      */
     function _validatePlanConfig(
-        uint64 tenorDays,
+        uint64 tenorSeconds,
         uint16 aprBps,
         uint256 minDeposit,
         uint256 maxDeposit,
         uint16 earlyWithdrawPenaltyBps
     ) private pure {
-        if (tenorDays == 0) revert InvalidTenor();
+        if (tenorSeconds == 0) revert InvalidTenor();
         if (aprBps > BPS_DENOMINATOR) revert InvalidApr();
         if (earlyWithdrawPenaltyBps > BPS_DENOMINATOR) revert InvalidPenalty();
         if (maxDeposit != 0 && minDeposit > maxDeposit) revert InvalidPlanRange();
@@ -1131,6 +1158,6 @@ contract SavingCore is ERC721, Ownable, Pausable {
      */
     function _getExistingPlan(uint256 planId) private view returns (SavingPlan storage plan) {
         plan = savingPlans[planId];
-        if (plan.tenorDays == 0) revert PlanNotFound();
+        if (plan.tenorSeconds == 0) revert PlanNotFound();
     }
 }

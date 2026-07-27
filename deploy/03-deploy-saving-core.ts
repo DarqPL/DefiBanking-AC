@@ -2,6 +2,7 @@ import { HardhatRuntimeEnvironment } from "hardhat/types";
 import { DeployFunction } from "hardhat-deploy/types";
 
 const METADATA_IMAGE_URI = "https://gray-solid-damselfly-388.mypinata.cloud/ipfs/bafybeihzzgfeo5tp2zrjtczo3jn5zke5yhjntthlnir2g3duhitfnotlbe";
+const DEFAULT_TENOR_SECONDS = 180 * 24 * 60 * 60;
 
 const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployments, ethers, getNamedAccounts } = hre;
@@ -49,8 +50,18 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   }
 
   if ((await savingCoreContract.nextPlanId()) === 0n) {
-    const tx = await savingCoreContract.createPlan(180, 225, 1_000_000, 10_000_000_000, 650, true);
+    const tx = await savingCoreContract.createPlan(DEFAULT_TENOR_SECONDS, 225, 1_000_000, 10_000_000_000, 650, true);
     await tx.wait();
+  }
+
+  const configuredGraceSeconds = process.env.AUTO_RENEW_GRACE_SECONDS;
+  if (configuredGraceSeconds !== undefined) {
+    const graceSeconds = BigInt(configuredGraceSeconds);
+    if ((await savingCoreContract.autoRenewGracePeriod()) !== graceSeconds) {
+      const tx = await savingCoreContract.setAutoRenewGracePeriod(graceSeconds);
+      await tx.wait();
+      console.log(`SavingCore auto-renew grace set to ${graceSeconds.toString()} seconds`);
+    }
   }
 };
 

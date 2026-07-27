@@ -10,9 +10,9 @@ describe("DepositMarketplace", function () {
   const userFunds = 100_000n * oneUsdc;
   const buyerFunds = 100_000n * oneUsdc;
   const vaultFunds = 100_000n * oneUsdc;
-  const tenorDays = 180n;
   const day = 24n * 60n * 60n;
-  const tenorSeconds = tenorDays * day;
+  const tenorSeconds = 180n * day;
+  const demoTenorSeconds = 15n * 60n;
   const autoRenewGracePeriod = 3n * day;
   const aprBps = 225n;
   const penaltyBps = 650n;
@@ -65,7 +65,7 @@ describe("DepositMarketplace", function () {
     await mockUSDC.mint(buyer.address, buyerFunds);
     await mockUSDC.approve(vaultAddress, vaultFunds);
     await vaultManager.fundVault(vaultFunds);
-    await savingCore.createPlan(tenorDays, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+    await savingCore.createPlan(tenorSeconds, aprBps, minDeposit, maxDeposit, penaltyBps, true);
 
     async function openDeposit(planId = 0n, amount = depositAmount) {
       await mockUSDC.connect(seller).approve(savingCoreAddress, amount);
@@ -244,9 +244,9 @@ describe("DepositMarketplace", function () {
   describe("Restricted Window", function () {
     it("calculates the no-listing window floor, percentage, and cap", async function () {
       const { marketplace, savingCore, openDeposit } = await deployMarketplaceFixture();
-      await savingCore.createPlan(30, aprBps, minDeposit, maxDeposit, penaltyBps, true);
-      await savingCore.createPlan(365, aprBps, minDeposit, maxDeposit, penaltyBps, true);
-      await savingCore.createPlan(1_000, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(30n * day, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(365n * day, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(1_000n * day, aprBps, minDeposit, maxDeposit, penaltyBps, true);
 
       const defaultDepositId = await openDeposit(0n);
       const shortDepositId = await openDeposit(1n);
@@ -257,6 +257,21 @@ describe("DepositMarketplace", function () {
       expect(await marketplace.noListingDays(shortDepositId)).to.equal(10n);
       expect(await marketplace.noListingDays(yearDepositId)).to.equal(18n);
       expect(await marketplace.noListingDays(longDepositId)).to.equal(30n);
+    });
+
+    it("blocks minute-length demo deposits immediately when the restricted window covers the whole tenor", async function () {
+      const { seller, savingCore, marketplace, marketplaceAddress, openDeposit } = await deployMarketplaceFixture();
+      await savingCore.createPlan(demoTenorSeconds, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      const depositId = await openDeposit(1n);
+
+      expect(await marketplace.noListingDays(depositId)).to.equal(10n);
+      expect(await marketplace.isListable(depositId)).to.equal(false);
+      await savingCore.connect(seller).approve(marketplaceAddress, depositId);
+      await expectCustomError(
+        marketplace.connect(seller).listDeposit.staticCall(depositId, salePrice, termsHash),
+        marketplace.interface,
+        "RestrictedWindow",
+      );
     });
 
     it("blocks listing at exactly the restricted window boundary", async function () {
@@ -374,7 +389,7 @@ describe("DepositMarketplace", function () {
     it("cleans exact stale listing ids and skips valid listings", async function () {
       const { seller, savingCore, marketplace, marketplaceAddress, openDeposit, listDeposit } = await deployMarketplaceFixture();
       const staleDepositId = await openDeposit();
-      await savingCore.createPlan(1_000, aprBps, minDeposit, maxDeposit, penaltyBps, true);
+      await savingCore.createPlan(1_000n * day, aprBps, minDeposit, maxDeposit, penaltyBps, true);
       const validDepositId = await openDeposit(1n);
       await listDeposit(staleDepositId);
       await listDeposit(validDepositId);

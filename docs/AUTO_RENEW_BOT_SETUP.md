@@ -109,7 +109,7 @@ For each request, the endpoint:
 - Skips deposits that are not `Active`.
 - Reads each active deposit's original plan status with a per-run cache.
 - Skips deposits whose original plan is disabled, so the bot does not waste gas on renewals the contract will reject.
-- Checks `block.timestamp >= maturityAt + AUTO_RENEW_GRACE_PERIOD`.
+- Reads `SavingCore.autoRenewGracePeriod()` and checks `block.timestamp >= maturityAt + autoRenewGracePeriod`.
 - Calculates `principal + interest` and skips deposits whose compounded principal is outside the original plan's min/max limits, so a permanent max-limit breach does not consume gas in later runs.
 - Calls `autoRenewDeposit(depositId)` for eligible deposits.
 - Continues scanning even if one renewal fails.
@@ -119,7 +119,9 @@ The full-scan design is simple and appropriate for the current assignment/demo d
 
 ## Timing Notes
 
-The bot cannot renew at the exact second of the grace-period deadline. cron-job.org calls the endpoint every 15 minutes, and the renewal transaction still needs to be mined. The practical behavior is renewal shortly after `maturityAt + AUTO_RENEW_GRACE_PERIOD`.
+The bot cannot renew at the exact second of the grace-period deadline. cron-job.org calls the endpoint every 15 minutes, and the renewal transaction still needs to be mined. The practical behavior is renewal shortly after `maturityAt + autoRenewGracePeriod`.
+
+The contract default remains the assignment value of `3 days`. For demos, the owner or operational admin can set `autoRenewGracePeriod` to `15 minutes` from the frontend admin dashboard or by setting `AUTO_RENEW_GRACE_SECONDS=900` during deployment. The endpoint still cannot renew before the contract grace period has elapsed.
 
 ## Dead Bot Case
 

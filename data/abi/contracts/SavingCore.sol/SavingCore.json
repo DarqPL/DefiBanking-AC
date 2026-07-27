@@ -185,6 +185,11 @@
     },
     {
         "inputs": [],
+        "name": "InvalidGracePeriod",
+        "type": "error"
+    },
+    {
+        "inputs": [],
         "name": "InvalidPenalty",
         "type": "error"
     },
@@ -369,6 +374,25 @@
             }
         ],
         "name": "ApprovalForAll",
+        "type": "event"
+    },
+    {
+        "anonymous": false,
+        "inputs": [
+            {
+                "indexed": false,
+                "internalType": "uint256",
+                "name": "previousGracePeriod",
+                "type": "uint256"
+            },
+            {
+                "indexed": false,
+                "internalType": "uint256",
+                "name": "newGracePeriod",
+                "type": "uint256"
+            }
+        ],
+        "name": "AutoRenewGracePeriodUpdated",
         "type": "event"
     },
     {
@@ -632,7 +656,7 @@
             {
                 "indexed": false,
                 "internalType": "uint64",
-                "name": "tenorDays",
+                "name": "tenorSeconds",
                 "type": "uint64"
             },
             {
@@ -844,12 +868,12 @@
     },
     {
         "inputs": [],
-        "name": "AUTO_RENEW_GRACE_PERIOD",
+        "name": "BPS_DENOMINATOR",
         "outputs": [
             {
-                "internalType": "uint256",
+                "internalType": "uint16",
                 "name": "",
-                "type": "uint256"
+                "type": "uint16"
             }
         ],
         "stateMutability": "view",
@@ -857,12 +881,12 @@
     },
     {
         "inputs": [],
-        "name": "BPS_DENOMINATOR",
+        "name": "DEFAULT_AUTO_RENEW_GRACE_PERIOD",
         "outputs": [
             {
-                "internalType": "uint16",
+                "internalType": "uint256",
                 "name": "",
-                "type": "uint16"
+                "type": "uint256"
             }
         ],
         "stateMutability": "view",
@@ -926,6 +950,19 @@
         "type": "function"
     },
     {
+        "inputs": [],
+        "name": "autoRenewGracePeriod",
+        "outputs": [
+            {
+                "internalType": "uint256",
+                "name": "",
+                "type": "uint256"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
         "inputs": [
             {
                 "internalType": "address",
@@ -961,7 +998,7 @@
         "inputs": [
             {
                 "internalType": "uint64",
-                "name": "tenorDays",
+                "name": "tenorSeconds",
                 "type": "uint64"
             },
             {
@@ -1485,7 +1522,7 @@
             },
             {
                 "internalType": "uint64",
-                "name": "tenorDays",
+                "name": "tenorSeconds",
                 "type": "uint64"
             },
             {
@@ -1534,6 +1571,19 @@
             }
         ],
         "name": "setApprovalForAll",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "uint256",
+                "name": "newGracePeriod",
+                "type": "uint256"
+            }
+        ],
+        "name": "setAutoRenewGracePeriod",
         "outputs": [],
         "stateMutability": "nonpayable",
         "type": "function"
