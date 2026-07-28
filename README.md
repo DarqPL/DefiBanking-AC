@@ -24,8 +24,11 @@ Student ID ending used for this project: `71`.
 
 ## Demo Links
 
-- Demo video: [https://youtu.be/J8TgPVEwpYI](https://youtu.be/J8TgPVEwpYI)
-- Live web app: [https://defi-banking-ac.vercel.app/](https://defi-banking-ac.vercel.app/)
+- Short demo video: <https://youtu.be/J8TgPVEwpYI>
+
+- Overview demo video: <https://youtu.be/udv4hBAqeD8>
+
+- Live web app: <https://defi-banking-ac.vercel.app/>
 
 ## Contracts
 
